@@ -153,6 +153,10 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is a streaming response
 	if isStreamingRequest(r.URL.Path, r.Method) {
+		// Flush headers immediately so clients know the connection is established
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
 		// Handle streaming response
 		s.streamResponse(w, resp.Body)
 	} else {
@@ -243,6 +247,11 @@ func (s *Server) handleExecHijack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer clientConn.Close()
+
+	// Disable Nagle's algorithm for lower latency on interactive terminal
+	if tcpConn, ok := clientConn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true)
+	}
 
 	// Send response to client
 	responseStr := fmt.Sprintf("HTTP/1.1 %d %s\r\n", statusCode, http.StatusText(statusCode))
