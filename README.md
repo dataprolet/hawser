@@ -1,6 +1,6 @@
 # Hawser
 
-Remote Docker agent for [Dockhand](https://dockhand.io) - manage Docker hosts anywhere.
+Remote Docker agent for [Dockhand](https://dockhand.pro) - manage Docker hosts anywhere.
 
 ## Overview
 
@@ -227,5 +227,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Related
 
-- [Dockhand](https://dockhand.io) - Modern Docker management application
+- [Dockhand](https://dockhand.pro) - Modern Docker management application
 - [Docker Engine API](https://docs.docker.com/engine/api/) - Docker API documentation
