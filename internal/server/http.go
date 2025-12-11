@@ -165,7 +165,9 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleExecHijack handles exec/start requests with bidirectional streaming
+// handleExecHijack handles exec/start requests
+// For non-interactive exec (no stdin), returns normal HTTP response with output
+// For interactive exec (with stdin from websocket), uses connection hijacking
 func (s *Server) handleExecHijack(w http.ResponseWriter, r *http.Request) {
 	// Read the request body first
 	body, err := io.ReadAll(r.Body)
@@ -234,7 +236,26 @@ func (s *Server) handleExecHijack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Hijack the client connection
+	// Check if this is a WebSocket upgrade request (interactive terminal)
+	// If not, just return the exec output as a normal HTTP response
+	if r.Header.Get("Upgrade") != "websocket" && r.Header.Get("Connection") != "Upgrade" {
+		// Non-interactive exec: return output as normal HTTP response
+		w.Header().Set("Content-Type", "application/vnd.docker.raw-stream")
+		w.WriteHeader(http.StatusOK)
+
+		// Flush any buffered data from reader
+		if reader.Buffered() > 0 {
+			buffered := make([]byte, reader.Buffered())
+			reader.Read(buffered)
+			w.Write(buffered)
+		}
+
+		// Copy remaining data from Docker
+		io.Copy(w, dockerConn)
+		return
+	}
+
+	// Interactive exec: hijack the connection for bidirectional streaming
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
