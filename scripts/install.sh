@@ -59,7 +59,7 @@ if [ ! -f "$CONFIG_DIR/config" ]; then
 # See https://github.com/Finsys/hawser for documentation
 
 # Standard Mode (comment out for Edge mode)
-PORT=2375
+PORT=2376
 
 # Edge Mode (uncomment and configure for Edge mode)
 # DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect

@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -102,6 +104,12 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 
 // handleProxy proxies requests to the Docker API
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
+	// Check if this is an exec/start request that needs hijacking
+	if isExecStartRequest(r.URL.Path, r.Method) {
+		s.handleExecHijack(w, r)
+		return
+	}
+
 	ctx := r.Context()
 
 	// Build headers for Docker request
@@ -139,6 +147,126 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		// Copy response body
 		io.Copy(w, resp.Body)
 	}
+}
+
+// handleExecHijack handles exec/start requests with bidirectional streaming
+func (s *Server) handleExecHijack(w http.ResponseWriter, r *http.Request) {
+	// Read the request body first
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Open raw connection to Docker socket
+	dockerConn, err := net.Dial("unix", s.cfg.DockerSocket)
+	if err != nil {
+		http.Error(w, "Failed to connect to Docker: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer dockerConn.Close()
+
+	// Build and send the HTTP request to Docker
+	// Include Upgrade headers for connection hijacking
+	reqStr := fmt.Sprintf("%s %s HTTP/1.1\r\n", r.Method, r.URL.RequestURI())
+	reqStr += "Host: localhost\r\n"
+	reqStr += "Connection: Upgrade\r\n"
+	reqStr += "Upgrade: tcp\r\n"
+	reqStr += fmt.Sprintf("Content-Type: %s\r\n", r.Header.Get("Content-Type"))
+	reqStr += fmt.Sprintf("Content-Length: %d\r\n", len(body))
+	reqStr += "\r\n"
+
+	// Send headers
+	if _, err := dockerConn.Write([]byte(reqStr)); err != nil {
+		http.Error(w, "Failed to send request to Docker: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Send body
+	if _, err := dockerConn.Write(body); err != nil {
+		http.Error(w, "Failed to send body to Docker: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Read the response status line and headers
+	reader := bufio.NewReader(dockerConn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		http.Error(w, "Failed to read Docker response: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	// Parse status code
+	parts := strings.SplitN(statusLine, " ", 3)
+	if len(parts) < 2 {
+		http.Error(w, "Invalid response from Docker", http.StatusBadGateway)
+		return
+	}
+
+	statusCode := 200
+	fmt.Sscanf(parts[1], "%d", &statusCode)
+
+	// Read headers until empty line
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			http.Error(w, "Failed to read Docker headers: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+
+	// Hijack the client connection
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+
+	clientConn, clientBuf, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, "Failed to hijack connection: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer clientConn.Close()
+
+	// Send response to client
+	responseStr := fmt.Sprintf("HTTP/1.1 %d %s\r\n", statusCode, http.StatusText(statusCode))
+	responseStr += "Content-Type: application/vnd.docker.raw-stream\r\n"
+	responseStr += "Connection: Upgrade\r\n"
+	responseStr += "Upgrade: tcp\r\n"
+	responseStr += "\r\n"
+	clientConn.Write([]byte(responseStr))
+
+	// Flush any buffered data from reader to client
+	if reader.Buffered() > 0 {
+		buffered := make([]byte, reader.Buffered())
+		reader.Read(buffered)
+		clientConn.Write(buffered)
+	}
+
+	// Bidirectional copy
+	done := make(chan struct{}, 2)
+
+	// Docker -> Client
+	go func() {
+		io.Copy(clientConn, dockerConn)
+		done <- struct{}{}
+	}()
+
+	// Client -> Docker (also flush any buffered client data first)
+	go func() {
+		if clientBuf.Reader.Buffered() > 0 {
+			io.CopyN(dockerConn, clientBuf, int64(clientBuf.Reader.Buffered()))
+		}
+		io.Copy(dockerConn, clientConn)
+		done <- struct{}{}
+	}()
+
+	// Wait for either direction to close
+	<-done
 }
 
 // streamResponse handles streaming Docker responses
@@ -225,6 +353,11 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		log.Printf("<-- %s %s (%s)", r.Method, r.URL.Path, time.Since(start))
 	})
+}
+
+// isExecStartRequest checks if this is an exec/start request that needs hijacking
+func isExecStartRequest(path, method string) bool {
+	return method == "POST" && strings.Contains(path, "/exec/") && strings.Contains(path, "/start")
 }
 
 // isStreamingRequest checks if the request expects a streaming response

@@ -16,7 +16,7 @@ type Config struct {
 	Token             string // Agent authentication token
 
 	// Standard Mode (passive HTTP server)
-	Port    int    // Default: 2375
+	Port    int    // Default: 2376
 	TLSCert string // Optional TLS certificate path
 	TLSKey  string // Optional TLS key path
 
@@ -43,7 +43,7 @@ func Load() (*Config, error) {
 		Token:             os.Getenv("TOKEN"),
 
 		// Standard mode
-		Port:    getEnvInt("PORT", 2375),
+		Port:    getEnvInt("PORT", 2376),
 		TLSCert: os.Getenv("TLS_CERT"),
 		TLSKey:  os.Getenv("TLS_KEY"),
 

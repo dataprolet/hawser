@@ -1,5 +1,9 @@
 # Hawser
 
+<p align="center">
+  <img src="logo/hawser.png" alt="Hawser Logo" width="200">
+</p>
+
 [![GitHub Release](https://img.shields.io/github/v/release/Finsys/hawser?style=flat-square&logo=github)](https://github.com/Finsys/hawser/releases/latest)
 [![Build](https://img.shields.io/github/actions/workflow/status/Finsys/hawser/build.yml?branch=main&style=flat-square&logo=github&label=build)](https://github.com/Finsys/hawser/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/actions/workflow/status/Finsys/hawser/release.yml?style=flat-square&logo=github&label=release)](https://github.com/Finsys/hawser/actions/workflows/release.yml)
@@ -25,13 +29,13 @@ Download the latest release from [GitHub Releases](https://github.com/Finsys/haw
 **Standard Mode:**
 
 ```bash
-hawser --port 2375
+hawser --port 2376
 ```
 
 **Standard Mode with Token Authentication** (optional):
 
 ```bash
-TOKEN=your-secret-token hawser --port 2375
+TOKEN=your-secret-token hawser --port 2376
 ```
 
 **Edge Mode:**
@@ -48,7 +52,7 @@ hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 2375:2375 \
+  -p 2376:2376 \
   ghcr.io/finsys/hawser:latest
 ```
 
@@ -58,7 +62,7 @@ docker run -d \
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 2375:2375 \
+  -p 2376:2376 \
   -e TOKEN=your-secret-token \
   ghcr.io/finsys/hawser:latest
 ```
@@ -76,6 +80,8 @@ docker run -d \
 
 ### Systemd Service
 
+#### Quick Install
+
 1. Download and install the binary:
 
 ```bash
@@ -92,7 +98,7 @@ Example config for **Standard Mode**:
 
 ```bash
 # Standard mode - listen for connections
-PORT=2375
+PORT=2376
 # Optional: require token authentication
 TOKEN=your-secret-token
 ```
@@ -111,6 +117,132 @@ TOKEN=your-agent-token
 sudo systemctl enable --now hawser
 ```
 
+#### Full Systemd Service File
+
+If you prefer to set up the systemd service manually, here's the complete service file:
+
+**`/etc/systemd/system/hawser.service`**
+
+```ini
+[Unit]
+Description=Hawser - Remote Docker Agent for Dockhand
+Documentation=https://github.com/Finsys/hawser
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hawser
+Restart=always
+RestartSec=10
+EnvironmentFile=/etc/hawser/config
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**`/etc/hawser/config`** (Standard Mode example):
+
+```bash
+# Hawser Configuration
+# See https://github.com/Finsys/hawser for documentation
+
+# Standard Mode
+PORT=2376
+
+# Docker socket path
+DOCKER_SOCKET=/var/run/docker.sock
+
+# Agent identification (optional)
+# AGENT_NAME=my-server
+
+# Token authentication (optional)
+# TOKEN=your-secret-token
+
+# TLS configuration (optional)
+# TLS_CERT=/etc/hawser/server.crt
+# TLS_KEY=/etc/hawser/server.key
+```
+
+**`/etc/hawser/config`** (Edge Mode example):
+
+```bash
+# Hawser Configuration
+# See https://github.com/Finsys/hawser for documentation
+
+# Edge Mode - connect to Dockhand server
+DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect
+TOKEN=your-agent-token
+
+# Docker socket path
+DOCKER_SOCKET=/var/run/docker.sock
+
+# Agent identification (optional)
+# AGENT_NAME=my-server
+
+# Connection settings (optional)
+# HEARTBEAT_INTERVAL=30
+# RECONNECT_DELAY=1
+# MAX_RECONNECT_DELAY=60
+```
+
+**Manual installation steps:**
+
+```bash
+# 1. Download binary
+curl -fsSL https://github.com/Finsys/hawser/releases/latest/download/hawser_linux_amd64.tar.gz | tar xz
+sudo install -m 755 hawser /usr/local/bin/hawser
+
+# 2. Create config directory
+sudo mkdir -p /etc/hawser
+
+# 3. Create config file (edit with your settings)
+sudo tee /etc/hawser/config << 'EOF'
+PORT=2376
+DOCKER_SOCKET=/var/run/docker.sock
+EOF
+
+# 4. Create systemd service file
+sudo tee /etc/systemd/system/hawser.service << 'EOF'
+[Unit]
+Description=Hawser - Remote Docker Agent for Dockhand
+Documentation=https://github.com/Finsys/hawser
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hawser
+Restart=always
+RestartSec=10
+EnvironmentFile=/etc/hawser/config
+
+NoNewPrivileges=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 5. Enable and start the service
+sudo systemctl daemon-reload
+sudo systemctl enable --now hawser
+
+# 6. Check status
+sudo systemctl status hawser
+sudo journalctl -u hawser -f
+```
+
 ## Configuration
 
 Hawser is configured via environment variables:
@@ -119,7 +251,7 @@ Hawser is configured via environment variables:
 |----------|-------------|---------|
 | `DOCKHAND_SERVER_URL` | WebSocket URL for Edge mode | - |
 | `TOKEN` | Authentication token | - |
-| `PORT` | HTTP server port (Standard mode) | `2375` |
+| `PORT` | HTTP server port (Standard mode) | `2376` |
 | `TLS_CERT` | Path to TLS certificate | - |
 | `TLS_KEY` | Path to TLS private key | - |
 | `DOCKER_SOCKET` | Docker socket path | `/var/run/docker.sock` |
@@ -146,7 +278,7 @@ docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /path/to/certs:/certs:ro \
-  -p 2376:2375 \
+  -p 2376:2376 \
   -e TLS_CERT=/certs/server.crt \
   -e TLS_KEY=/certs/server.key \
   ghcr.io/finsys/hawser:latest
@@ -160,7 +292,7 @@ To require token authentication:
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 2375:2375 \
+  -p 2376:2376 \
   -e TOKEN=your-secret-token \
   ghcr.io/finsys/hawser:latest
 ```
@@ -168,7 +300,7 @@ docker run -d \
 Clients must include the token in requests:
 
 ```bash
-curl -H "X-Hawser-Token: your-secret-token" http://localhost:2375/containers/json
+curl -H "X-Hawser-Token: your-secret-token" http://localhost:2376/containers/json
 ```
 
 ## Features
@@ -224,7 +356,7 @@ In Standard mode, Hawser proxies all Docker API endpoints plus:
 ### Health Check
 
 ```bash
-curl http://localhost:2375/_hawser/health
+curl http://localhost:2376/_hawser/health
 # {"status":"healthy"}
 ```
 
@@ -249,7 +381,7 @@ cd hawser
 go build -o hawser ./cmd/hawser
 
 # Run
-./hawser --port 2375
+./hawser --port 2376
 ```
 
 ## Docker Build

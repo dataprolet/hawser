@@ -13,7 +13,7 @@ RUN apk add --no-cache \
 COPY hawser /usr/local/bin/hawser
 
 # Environment variables with defaults
-ENV PORT=2375 \
+ENV PORT=2376 \
     DOCKER_SOCKET=/var/run/docker.sock \
     HEARTBEAT_INTERVAL=30 \
     REQUEST_TIMEOUT=30 \
@@ -21,7 +21,7 @@ ENV PORT=2375 \
     MAX_RECONNECT_DELAY=60
 
 # Expose default port
-EXPOSE 2375
+EXPOSE 2376
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
