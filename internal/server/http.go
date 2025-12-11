@@ -120,8 +120,14 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Make request to Docker
-	resp, err := s.dockerClient.RequestRaw(ctx, r.Method, r.URL.RequestURI(), headers, r.Body)
+	// Make request to Docker - use StreamRequest for streaming endpoints (no timeout)
+	var resp *http.Response
+	var err error
+	if isStreamingRequest(r.URL.Path, r.Method) {
+		resp, err = s.dockerClient.StreamRequest(ctx, r.Method, r.URL.RequestURI(), headers, r.Body)
+	} else {
+		resp, err = s.dockerClient.RequestRaw(ctx, r.Method, r.URL.RequestURI(), headers, r.Body)
+	}
 	if err != nil {
 		log.Printf("Docker request failed: %v", err)
 		http.Error(w, "Docker request failed: "+err.Error(), http.StatusBadGateway)
