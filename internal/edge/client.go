@@ -3,6 +3,7 @@ package edge
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,6 +33,18 @@ type Client struct {
 	// Active streams for exec/logs
 	streams   map[string]*StreamContext
 	streamsMu sync.RWMutex
+
+	// Active exec sessions
+	execSessions   map[string]*ExecSession
+	execSessionsMu sync.RWMutex
+}
+
+// ExecSession tracks an active exec/terminal session
+type ExecSession struct {
+	ExecID       string
+	DockerExecID string
+	Conn         *docker.HijackedConn
+	Cancel       context.CancelFunc
 }
 
 // StreamContext tracks an active streaming request
@@ -65,6 +78,7 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 		metrics:      metrics.NewCollector(dockerClient),
 		stop:         stop,
 		streams:      make(map[string]*StreamContext),
+		execSessions: make(map[string]*ExecSession),
 	}
 
 	return client.runWithReconnect()
@@ -270,6 +284,38 @@ func (c *Client) handleMessage(data []byte) {
 		}
 		c.cancelStream(end.RequestID)
 
+	case protocol.TypeExecStart:
+		var execStart protocol.ExecStartMessage
+		if err := json.Unmarshal(data, &execStart); err != nil {
+			log.Errorf("Failed to parse exec_start: %v", err)
+			return
+		}
+		go c.handleExecStart(&execStart)
+
+	case protocol.TypeExecInput:
+		var execInput protocol.ExecInputMessage
+		if err := json.Unmarshal(data, &execInput); err != nil {
+			log.Errorf("Failed to parse exec_input: %v", err)
+			return
+		}
+		c.handleExecInput(&execInput)
+
+	case protocol.TypeExecResize:
+		var execResize protocol.ExecResizeMessage
+		if err := json.Unmarshal(data, &execResize); err != nil {
+			log.Errorf("Failed to parse exec_resize: %v", err)
+			return
+		}
+		c.handleExecResize(&execResize)
+
+	case protocol.TypeExecEnd:
+		var execEnd protocol.ExecEndMessage
+		if err := json.Unmarshal(data, &execEnd); err != nil {
+			log.Errorf("Failed to parse exec_end: %v", err)
+			return
+		}
+		c.handleExecEnd(&execEnd)
+
 	default:
 		log.Warnf("Unknown message type: %s", msgType)
 	}
@@ -463,13 +509,200 @@ func (c *Client) sendJSON(v interface{}) error {
 		return fmt.Errorf("not connected")
 	}
 
+	// Debug: log what we're sending
+	data, err := json.Marshal(v)
+	if err != nil {
+		log.Errorf("Failed to marshal message: %v", err)
+		return err
+	}
+
+	// Extra debug for response messages
+	if resp, ok := v.(*protocol.ResponseMessage); ok {
+		log.Debugf("Sending response: requestId=%s, statusCode=%d, isBinary=%v, bodyLen=%d",
+			resp.RequestID, resp.StatusCode, resp.IsBinary, len(resp.Body))
+	}
+
+	log.Debugf("Sending message: %d bytes, preview: %s", len(data), string(data[:min(len(data), 200)]))
+
 	return c.conn.WriteJSON(v)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// handleExecStart starts a new exec session
+func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
+	log.Infof("Starting exec session: %s in container %s", msg.ExecID, msg.ContainerID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Create exec instance
+	execResp, err := c.dockerClient.CreateExec(ctx, &docker.ExecConfig{
+		ContainerID: msg.ContainerID,
+		Cmd:         []string{msg.Cmd},
+		User:        msg.User,
+		Tty:         true,
+	})
+	if err != nil {
+		log.Errorf("Failed to create exec: %v", err)
+		c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "EXEC_CREATE_ERROR"))
+		cancel()
+		return
+	}
+
+	log.Debugf("Created Docker exec: %s", execResp.ID)
+
+	// Start exec with hijack
+	hijacked, err := c.dockerClient.StartExecAttach(ctx, execResp.ID)
+	if err != nil {
+		log.Errorf("Failed to start exec: %v", err)
+		c.sendJSON(protocol.NewErrorMessage(msg.ExecID, err.Error(), "EXEC_START_ERROR"))
+		cancel()
+		return
+	}
+
+	// Resize terminal to initial size
+	if msg.Cols > 0 && msg.Rows > 0 {
+		if err := c.dockerClient.ResizeExec(ctx, execResp.ID, msg.Rows, msg.Cols); err != nil {
+			log.Warnf("Failed to resize exec: %v", err)
+		}
+	}
+
+	// Store session
+	session := &ExecSession{
+		ExecID:       msg.ExecID,
+		DockerExecID: execResp.ID,
+		Conn:         hijacked,
+		Cancel:       cancel,
+	}
+
+	c.execSessionsMu.Lock()
+	c.execSessions[msg.ExecID] = session
+	c.execSessionsMu.Unlock()
+
+	// Send ready message
+	c.sendJSON(protocol.NewExecReadyMessage(msg.ExecID))
+
+	// Start reading output from Docker
+	go c.readExecOutput(session)
+}
+
+// readExecOutput reads output from exec session and sends to Dockhand
+func (c *Client) readExecOutput(session *ExecSession) {
+	defer func() {
+		c.execSessionsMu.Lock()
+		delete(c.execSessions, session.ExecID)
+		c.execSessionsMu.Unlock()
+
+		if session.Conn != nil && session.Conn.Conn != nil {
+			session.Conn.Conn.Close()
+		}
+		session.Cancel()
+
+		c.sendJSON(protocol.NewExecEndMessage(session.ExecID, "container_exit"))
+		log.Infof("Exec session ended: %s", session.ExecID)
+	}()
+
+	// First, send any leftover data from the HTTP header parsing
+	if len(session.Conn.Leftover) > 0 {
+		c.sendJSON(protocol.NewExecOutputMessage(session.ExecID, session.Conn.Leftover))
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := session.Conn.Conn.Read(buf)
+		if n > 0 {
+			// Send output to Dockhand
+			c.sendJSON(protocol.NewExecOutputMessage(session.ExecID, buf[:n]))
+		}
+		if err != nil {
+			if err != io.EOF {
+				log.Debugf("Exec read error: %v", err)
+			}
+			return
+		}
+	}
+}
+
+// handleExecInput handles terminal input from user
+func (c *Client) handleExecInput(msg *protocol.ExecInputMessage) {
+	c.execSessionsMu.RLock()
+	session, ok := c.execSessions[msg.ExecID]
+	c.execSessionsMu.RUnlock()
+
+	if !ok {
+		log.Warnf("Exec session not found: %s", msg.ExecID)
+		return
+	}
+
+	// Decode base64 input
+	data, err := base64.StdEncoding.DecodeString(msg.Data)
+	if err != nil {
+		log.Errorf("Failed to decode exec input: %v", err)
+		return
+	}
+
+	// Write to Docker
+	if session.Conn != nil && session.Conn.Conn != nil {
+		if _, err := session.Conn.Conn.Write(data); err != nil {
+			log.Errorf("Failed to write exec input: %v", err)
+		}
+	}
+}
+
+// handleExecResize handles terminal resize
+func (c *Client) handleExecResize(msg *protocol.ExecResizeMessage) {
+	c.execSessionsMu.RLock()
+	session, ok := c.execSessions[msg.ExecID]
+	c.execSessionsMu.RUnlock()
+
+	if !ok {
+		log.Warnf("Exec session not found for resize: %s", msg.ExecID)
+		return
+	}
+
+	if err := c.dockerClient.ResizeExec(context.Background(), session.DockerExecID, msg.Rows, msg.Cols); err != nil {
+		log.Warnf("Failed to resize exec: %v", err)
+	}
+}
+
+// handleExecEnd handles end of exec session
+func (c *Client) handleExecEnd(msg *protocol.ExecEndMessage) {
+	c.execSessionsMu.Lock()
+	session, ok := c.execSessions[msg.ExecID]
+	if ok {
+		delete(c.execSessions, msg.ExecID)
+	}
+	c.execSessionsMu.Unlock()
+
+	if ok {
+		log.Infof("Closing exec session: %s (reason: %s)", msg.ExecID, msg.Reason)
+		if session.Conn != nil && session.Conn.Conn != nil {
+			session.Conn.Conn.Close()
+		}
+		session.Cancel()
+	}
 }
 
 // close closes the WebSocket connection
 func (c *Client) close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Close all exec sessions
+	c.execSessionsMu.Lock()
+	for id, session := range c.execSessions {
+		if session.Conn != nil && session.Conn.Conn != nil {
+			session.Conn.Conn.Close()
+		}
+		session.Cancel()
+		delete(c.execSessions, id)
+	}
+	c.execSessionsMu.Unlock()
 
 	if c.conn != nil {
 		c.conn.Close()

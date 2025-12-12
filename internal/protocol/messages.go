@@ -1,6 +1,10 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
+)
 
 // Protocol version
 const ProtocolVersion = "1.0"
@@ -17,6 +21,14 @@ const (
 	TypePing      = "ping"       // Keepalive request
 	TypePong      = "pong"       // Keepalive response
 	TypeError     = "error"      // Error message
+
+	// Exec-specific message types for bidirectional terminal
+	TypeExecStart  = "exec_start"  // Dockhand → Agent: Start exec session
+	TypeExecReady  = "exec_ready"  // Agent → Dockhand: Exec session ready
+	TypeExecInput  = "exec_input"  // Dockhand → Agent: Terminal input from user
+	TypeExecOutput = "exec_output" // Agent → Dockhand: Terminal output to user
+	TypeExecResize = "exec_resize" // Dockhand → Agent: Terminal resize
+	TypeExecEnd    = "exec_end"    // Bidirectional: End exec session
 )
 
 // Agent capabilities
@@ -81,17 +93,61 @@ type ResponseMessage struct {
 	RequestID  string            `json:"requestId"`
 	StatusCode int               `json:"statusCode"`
 	Headers    map[string]string `json:"headers,omitempty"`
-	Body       json.RawMessage   `json:"body,omitempty"`
+	Body       string            `json:"body,omitempty"`       // Base64-encoded for binary, plain string for JSON
+	IsBinary   bool              `json:"isBinary,omitempty"`   // True if Body is base64-encoded binary data
 }
 
 // NewResponseMessage creates a new response message
-func NewResponseMessage(requestID string, statusCode int, headers map[string]string, body json.RawMessage) *ResponseMessage {
+// For JSON responses, body is sent as-is
+// For binary responses (logs, tar, etc.), body is base64-encoded and IsBinary is set to true
+func NewResponseMessage(requestID string, statusCode int, headers map[string]string, body []byte) *ResponseMessage {
+	// Check if this is binary data (not valid JSON or contains non-printable chars)
+	isBinary := false
+	bodyStr := ""
+
+	if len(body) > 0 {
+		// Check for common binary indicators
+		contentType := ""
+		for k, v := range headers {
+			if k == "Content-Type" || k == "content-type" {
+				contentType = v
+				break
+			}
+		}
+
+		// Binary content types
+		if strings.Contains(contentType, "octet-stream") ||
+			strings.Contains(contentType, "raw-stream") ||
+			strings.Contains(contentType, "tar") ||
+			strings.Contains(contentType, "gzip") {
+			isBinary = true
+		}
+
+		// Check for non-printable bytes (binary data)
+		if !isBinary {
+			for _, b := range body {
+				// Allow printable ASCII, tabs, newlines, carriage returns
+				if b < 0x09 || (b > 0x0D && b < 0x20) || b == 0x7F {
+					isBinary = true
+					break
+				}
+			}
+		}
+
+		if isBinary {
+			bodyStr = base64.StdEncoding.EncodeToString(body)
+		} else {
+			bodyStr = string(body)
+		}
+	}
+
 	return &ResponseMessage{
 		Type:       TypeResponse,
 		RequestID:  requestID,
 		StatusCode: statusCode,
 		Headers:    headers,
-		Body:       body,
+		Body:       bodyStr,
+		IsBinary:   isBinary,
 	}
 }
 
@@ -212,4 +268,76 @@ func ParseMessageType(data []byte) (string, error) {
 		return "", err
 	}
 	return base.Type, nil
+}
+
+// ExecStartMessage requests starting an exec session
+type ExecStartMessage struct {
+	Type        string `json:"type"`
+	ExecID      string `json:"execId"`      // Unique ID for this exec session
+	ContainerID string `json:"containerId"` // Container to exec into
+	Cmd         string `json:"cmd"`         // Command to run (e.g., "/bin/sh")
+	User        string `json:"user"`        // User to run as
+	Cols        int    `json:"cols"`        // Initial terminal columns
+	Rows        int    `json:"rows"`        // Initial terminal rows
+}
+
+// ExecReadyMessage confirms exec session is ready
+type ExecReadyMessage struct {
+	Type   string `json:"type"`
+	ExecID string `json:"execId"`
+}
+
+// NewExecReadyMessage creates a new exec ready message
+func NewExecReadyMessage(execID string) *ExecReadyMessage {
+	return &ExecReadyMessage{
+		Type:   TypeExecReady,
+		ExecID: execID,
+	}
+}
+
+// ExecInputMessage sends terminal input to the exec session
+type ExecInputMessage struct {
+	Type   string `json:"type"`
+	ExecID string `json:"execId"`
+	Data   string `json:"data"` // Base64-encoded input data
+}
+
+// ExecOutputMessage sends terminal output from the exec session
+type ExecOutputMessage struct {
+	Type   string `json:"type"`
+	ExecID string `json:"execId"`
+	Data   string `json:"data"` // Base64-encoded output data
+}
+
+// NewExecOutputMessage creates a new exec output message
+func NewExecOutputMessage(execID string, data []byte) *ExecOutputMessage {
+	return &ExecOutputMessage{
+		Type:   TypeExecOutput,
+		ExecID: execID,
+		Data:   base64.StdEncoding.EncodeToString(data),
+	}
+}
+
+// ExecResizeMessage resizes the exec terminal
+type ExecResizeMessage struct {
+	Type   string `json:"type"`
+	ExecID string `json:"execId"`
+	Cols   int    `json:"cols"`
+	Rows   int    `json:"rows"`
+}
+
+// ExecEndMessage ends an exec session
+type ExecEndMessage struct {
+	Type   string `json:"type"`
+	ExecID string `json:"execId"`
+	Reason string `json:"reason,omitempty"` // "user_closed", "container_exit", "error"
+}
+
+// NewExecEndMessage creates a new exec end message
+func NewExecEndMessage(execID string, reason string) *ExecEndMessage {
+	return &ExecEndMessage{
+		Type:   TypeExecEnd,
+		ExecID: execID,
+		Reason: reason,
+	}
 }

@@ -211,3 +211,154 @@ func (c *Client) Close() error {
 	c.streamClient.CloseIdleConnections()
 	return nil
 }
+
+// ExecConfig holds the configuration for creating an exec instance
+type ExecConfig struct {
+	ContainerID string
+	Cmd         []string
+	User        string
+	Tty         bool
+}
+
+// ExecCreateResponse is the response from exec create
+type ExecCreateResponse struct {
+	ID string `json:"Id"`
+}
+
+// CreateExec creates a new exec instance in a container
+func (c *Client) CreateExec(ctx context.Context, config *ExecConfig) (*ExecCreateResponse, error) {
+	body := map[string]interface{}{
+		"AttachStdin":  true,
+		"AttachStdout": true,
+		"AttachStderr": true,
+		"Tty":          config.Tty,
+		"Cmd":          config.Cmd,
+	}
+	if config.User != "" {
+		body["User"] = config.User
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("/containers/%s/exec", config.ContainerID)
+	resp, err := c.Request(ctx, "POST", path, nil, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("exec create failed: %d - %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result ExecCreateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// HijackedConn represents a hijacked connection for exec
+type HijackedConn struct {
+	Conn     net.Conn
+	Reader   *io.Reader
+	Leftover []byte // Any data read past the HTTP headers
+}
+
+// StartExecAttach starts an exec instance and returns a hijacked connection
+func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedConn, error) {
+	// Connect directly to the Unix socket
+	conn, err := net.Dial("unix", c.socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Docker socket: %w", err)
+	}
+
+	// Build the HTTP request manually for hijacking
+	path := fmt.Sprintf("/%s/exec/%s/start", c.apiVersion, execID)
+	body := `{"Detach":false,"Tty":true}`
+	request := fmt.Sprintf(
+		"POST %s HTTP/1.1\r\n"+
+			"Host: localhost\r\n"+
+			"Content-Type: application/json\r\n"+
+			"Connection: Upgrade\r\n"+
+			"Upgrade: tcp\r\n"+
+			"Content-Length: %d\r\n"+
+			"\r\n"+
+			"%s",
+		path, len(body), body,
+	)
+
+	// Send the request
+	if _, err := conn.Write([]byte(request)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send exec start request: %w", err)
+	}
+
+	// Read HTTP response headers - we need to read until we find the end of headers (\r\n\r\n)
+	// Use a buffered approach to handle headers that might span multiple reads
+	headerBuf := make([]byte, 0, 4096)
+	tempBuf := make([]byte, 1024)
+	headerEnd := -1
+
+	for {
+		n, err := conn.Read(tempBuf)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("failed to read exec start response: %w", err)
+		}
+		headerBuf = append(headerBuf, tempBuf[:n]...)
+
+		// Look for end of HTTP headers
+		if idx := strings.Index(string(headerBuf), "\r\n\r\n"); idx != -1 {
+			headerEnd = idx + 4
+			break
+		}
+
+		// Safety check - headers shouldn't be this long
+		if len(headerBuf) > 8192 {
+			conn.Close()
+			return nil, fmt.Errorf("HTTP headers too long")
+		}
+	}
+
+	response := string(headerBuf[:headerEnd])
+	log.Debugf("Exec start response: %s", strings.Split(response, "\r\n")[0])
+
+	// Check for successful upgrade (101 Switching Protocols, 101 UPGRADED) or 200 OK
+	if !strings.Contains(response, "101 ") && !strings.Contains(response, "200 OK") {
+		conn.Close()
+		return nil, fmt.Errorf("exec start failed: %s", response)
+	}
+
+	// Check if we read any data beyond the headers (leftover data after \r\n\r\n)
+	var leftover []byte
+	if headerEnd < len(headerBuf) {
+		leftover = headerBuf[headerEnd:]
+	}
+
+	return &HijackedConn{
+		Conn:     conn,
+		Leftover: leftover,
+	}, nil
+}
+
+// ResizeExec resizes the exec terminal
+func (c *Client) ResizeExec(ctx context.Context, execID string, height, width int) error {
+	path := fmt.Sprintf("/exec/%s/resize?h=%d&w=%d", execID, height, width)
+	resp, err := c.Request(ctx, "POST", path, nil, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("resize failed with status %d", resp.StatusCode)
+	}
+
+	return nil
+}
