@@ -350,16 +350,7 @@ func (c *Client) handleMessage(data []byte) {
 
 // handleRequest processes Docker API requests
 func (c *Client) handleRequest(req *protocol.RequestMessage) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.cfg.RequestTimeout)*time.Second)
-	defer cancel()
-
 	log.Debugf("Docker API request: %s %s (streaming=%v)", req.Method, req.Path, req.Streaming)
-
-	// Check if this is a compose operation
-	if req.Path == "/_hawser/compose" {
-		c.handleComposeRequest(ctx, req)
-		return
-	}
 
 	// Build headers
 	headers := make(map[string]string)
@@ -367,15 +358,26 @@ func (c *Client) handleRequest(req *protocol.RequestMessage) {
 		headers[k] = v
 	}
 
+	// Streaming requests use a background context (no timeout) since they can run indefinitely
+	if req.Streaming {
+		c.handleStreamingRequest(req, headers)
+		return
+	}
+
+	// Non-streaming requests use a timeout context
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.cfg.RequestTimeout)*time.Second)
+	defer cancel()
+
+	// Check if this is a compose operation
+	if req.Path == "/_hawser/compose" {
+		c.handleComposeRequest(ctx, req)
+		return
+	}
+
 	// Make Docker request
 	var body io.Reader
 	if len(req.Body) > 0 {
 		body = bytes.NewReader(req.Body)
-	}
-
-	if req.Streaming {
-		c.handleStreamingRequest(ctx, req, headers)
-		return
 	}
 
 	// Regular request
@@ -406,9 +408,10 @@ func (c *Client) handleRequest(req *protocol.RequestMessage) {
 	c.sendJSON(protocol.NewResponseMessage(req.RequestID, resp.StatusCode, respHeaders, respBody))
 }
 
-// handleStreamingRequest handles streaming Docker responses
-func (c *Client) handleStreamingRequest(ctx context.Context, req *protocol.RequestMessage, headers map[string]string) {
-	ctx, cancel := context.WithCancel(ctx)
+// handleStreamingRequest handles streaming Docker responses (logs, events, etc.)
+// Uses a background context with cancel since streaming can run indefinitely
+func (c *Client) handleStreamingRequest(req *protocol.RequestMessage, headers map[string]string) {
+	ctx, cancel := context.WithCancel(context.Background())
 
 	// Register stream
 	c.streamsMu.Lock()
