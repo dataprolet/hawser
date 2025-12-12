@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/Finsys/hawser/internal/config"
 	"github.com/Finsys/hawser/internal/docker"
+	"github.com/Finsys/hawser/internal/log"
 	"github.com/Finsys/hawser/internal/metrics"
 	"github.com/Finsys/hawser/internal/protocol"
 	"github.com/gorilla/websocket"
@@ -53,9 +53,9 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	// Get Docker version for logging
 	version, err := dockerClient.GetVersion(context.Background())
 	if err != nil {
-		log.Printf("Warning: could not get Docker version: %v", err)
+		log.Warnf("Could not get Docker version: %v", err)
 	} else {
-		log.Printf("Connected to Docker %s (API %s)", version.Version, version.APIVersion)
+		log.Infof("Connected to Docker %s (API %s)", version.Version, version.APIVersion)
 	}
 
 	client := &Client{
@@ -87,7 +87,7 @@ func (c *Client) runWithReconnect() error {
 			backoff = time.Duration(c.cfg.ReconnectDelay) * time.Second
 			c.run()
 		} else {
-			log.Printf("Connection failed: %v", err)
+			log.Errorf("Connection failed: %v", err)
 		}
 
 		// Check if we should stop
@@ -97,7 +97,7 @@ func (c *Client) runWithReconnect() error {
 		default:
 		}
 
-		log.Printf("Reconnecting in %v...", backoff)
+		log.Infof("Reconnecting in %v...", backoff)
 		select {
 		case <-time.After(backoff):
 		case <-c.stop:
@@ -114,7 +114,7 @@ func (c *Client) runWithReconnect() error {
 
 // connect establishes WebSocket connection to Dockhand
 func (c *Client) connect() error {
-	log.Printf("Connecting to %s", c.cfg.DockhandServerURL)
+	log.Infof("Connecting to %s", c.cfg.DockhandServerURL)
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
@@ -202,7 +202,7 @@ func (c *Client) waitForWelcome() error {
 		return err
 	}
 
-	log.Printf("Welcome received, environment ID: %d", welcome.EnvironmentID)
+	log.Infof("Welcome received, environment ID: %d", welcome.EnvironmentID)
 	return nil
 }
 
@@ -228,7 +228,7 @@ func (c *Client) run() {
 
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
-			log.Printf("Read error: %v", err)
+			log.Errorf("Read error: %v", err)
 			close(done)
 			return
 		}
@@ -241,15 +241,17 @@ func (c *Client) run() {
 func (c *Client) handleMessage(data []byte) {
 	msgType, err := protocol.ParseMessageType(data)
 	if err != nil {
-		log.Printf("Failed to parse message: %v", err)
+		log.Errorf("Failed to parse message: %v", err)
 		return
 	}
+
+	log.Debugf("Received message type: %s", msgType)
 
 	switch msgType {
 	case protocol.TypeRequest:
 		var req protocol.RequestMessage
 		if err := json.Unmarshal(data, &req); err != nil {
-			log.Printf("Failed to parse request: %v", err)
+			log.Errorf("Failed to parse request: %v", err)
 			return
 		}
 		c.handleRequest(&req)
@@ -269,7 +271,7 @@ func (c *Client) handleMessage(data []byte) {
 		c.cancelStream(end.RequestID)
 
 	default:
-		log.Printf("Unknown message type: %s", msgType)
+		log.Warnf("Unknown message type: %s", msgType)
 	}
 }
 
@@ -277,6 +279,8 @@ func (c *Client) handleMessage(data []byte) {
 func (c *Client) handleRequest(req *protocol.RequestMessage) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.cfg.RequestTimeout)*time.Second)
 	defer cancel()
+
+	log.Debugf("Docker API request: %s %s (streaming=%v)", req.Method, req.Path, req.Streaming)
 
 	// Check if this is a compose operation
 	if req.Path == "/_hawser/compose" {
@@ -325,6 +329,7 @@ func (c *Client) handleRequest(req *protocol.RequestMessage) {
 	}
 
 	// Send response
+	log.Debugf("Docker API response: %s %s -> %d", req.Method, req.Path, resp.StatusCode)
 	c.sendJSON(protocol.NewResponseMessage(req.RequestID, resp.StatusCode, respHeaders, respBody))
 }
 
@@ -371,7 +376,7 @@ func (c *Client) handleStreamingRequest(ctx context.Context, req *protocol.Reque
 		}
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("Stream read error: %v", err)
+				log.Errorf("Stream read error: %v", err)
 			}
 			return
 		}
@@ -385,6 +390,8 @@ func (c *Client) handleComposeRequest(ctx context.Context, req *protocol.Request
 		c.sendJSON(protocol.NewErrorMessage(req.RequestID, err.Error(), "PARSE_ERROR"))
 		return
 	}
+
+	log.Debugf("Compose operation: %s on %s", op.Operation, op.ProjectName)
 
 	result, err := c.compose.Execute(ctx, &op)
 	if err != nil {
@@ -439,7 +446,7 @@ func (c *Client) metricsLoop(done <-chan struct{}) {
 		case <-ticker.C:
 			hostMetrics, err := c.metrics.Collect()
 			if err != nil {
-				log.Printf("Failed to collect metrics: %v", err)
+				log.Warnf("Failed to collect metrics: %v", err)
 				continue
 			}
 			c.sendJSON(protocol.NewMetricsMessage(time.Now().Unix(), *hostMetrics))

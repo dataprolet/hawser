@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Finsys/hawser/internal/log"
 )
 
 // Client wraps Docker API operations
@@ -115,7 +117,12 @@ func (c *Client) Request(ctx context.Context, method, path string, headers map[s
 		req.Header.Set(k, v)
 	}
 
-	return c.httpClient.Do(req)
+	log.Debugf("Docker API: %s %s", method, url)
+	resp, err := c.httpClient.Do(req)
+	if err == nil {
+		log.Debugf("Docker API response: %s %s -> %d", method, path, resp.StatusCode)
+	}
+	return resp, err
 }
 
 // RequestRaw makes a request without API versioning (for proxying)
@@ -132,7 +139,12 @@ func (c *Client) RequestRaw(ctx context.Context, method, path string, headers ma
 		req.Header.Set(k, v)
 	}
 
-	return c.httpClient.Do(req)
+	log.Debugf("Docker API (raw): %s %s", method, path)
+	resp, err := c.httpClient.Do(req)
+	if err == nil {
+		log.Debugf("Docker API response: %s %s -> %d", method, path, resp.StatusCode)
+	}
+	return resp, err
 }
 
 // StreamRequest makes a streaming request (for logs, exec, events)
@@ -149,8 +161,13 @@ func (c *Client) StreamRequest(ctx context.Context, method, path string, headers
 		req.Header.Set(k, v)
 	}
 
+	log.Debugf("Docker API (stream): %s %s", method, path)
 	// Use pre-initialized stream client (no timeout, shared connection pool)
-	return c.streamClient.Do(req)
+	resp, err := c.streamClient.Do(req)
+	if err == nil {
+		log.Debugf("Docker API stream started: %s %s -> %d", method, path, resp.StatusCode)
+	}
+	return resp, err
 }
 
 // GetDataRoot returns Docker's data root directory

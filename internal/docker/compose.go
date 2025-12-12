@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Finsys/hawser/internal/log"
 )
 
 // ComposeClient handles Docker Compose operations
@@ -103,6 +105,9 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	// Set Docker socket environment
 	cmd.Env = append(os.Environ(), fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket))
 
+	// Log the command being executed
+	log.Debugf("Compose: docker compose %s (project=%s)", strings.Join(args, " "), op.ProjectName)
+
 	// Capture output
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -124,6 +129,9 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		if result.Error == "" {
 			result.Error = err.Error()
 		}
+		log.Debugf("Compose failed: exit=%d error=%s", result.ExitCode, result.Error)
+	} else {
+		log.Debugf("Compose completed: %s (project=%s)", op.Operation, op.ProjectName)
 	}
 
 	// For ps command, include stderr in output if it contains JSON

@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/Finsys/hawser/internal/config"
 	"github.com/Finsys/hawser/internal/docker"
+	"github.com/Finsys/hawser/internal/log"
 )
 
 // Server represents the Standard mode HTTP server
@@ -36,9 +36,9 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	// Get Docker version for logging
 	version, err := dockerClient.GetVersion(context.Background())
 	if err != nil {
-		log.Printf("Warning: could not get Docker version: %v", err)
+		log.Warnf("Could not get Docker version: %v", err)
 	} else {
-		log.Printf("Connected to Docker %s (API %s)", version.Version, version.APIVersion)
+		log.Infof("Connected to Docker %s (API %s)", version.Version, version.APIVersion)
 	}
 
 	server := &Server{
@@ -70,7 +70,7 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	errChan := make(chan error, 1)
 	go func() {
 		if cfg.TLSEnabled() {
-			log.Printf("Starting HTTPS server on %s", addr)
+			log.Infof("Starting HTTPS server on %s", addr)
 			cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
 			if err != nil {
 				errChan <- fmt.Errorf("failed to load TLS certificates: %w", err)
@@ -82,7 +82,7 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 			}
 			errChan <- server.httpServer.ListenAndServeTLS("", "")
 		} else {
-			log.Printf("Starting HTTP server on %s", addr)
+			log.Infof("Starting HTTP server on %s", addr)
 			errChan <- server.httpServer.ListenAndServe()
 		}
 	}()
@@ -90,7 +90,7 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	// Wait for stop signal or error
 	select {
 	case <-stop:
-		log.Println("Shutting down server...")
+		log.Info("Shutting down server...")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.httpServer.Shutdown(ctx)
@@ -135,10 +135,13 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		resp, err = s.dockerClient.RequestRaw(ctx, r.Method, r.URL.RequestURI(), headers, r.Body)
 	}
 	if err != nil {
-		log.Printf("Docker request failed: %v", err)
+		log.Errorf("Docker request failed: %v", err)
 		http.Error(w, "Docker request failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
+
+	// Debug log the Docker API call
+	log.Debugf("Docker API: %s %s -> %d", r.Method, r.URL.RequestURI(), resp.StatusCode)
 	defer resp.Body.Close()
 
 	// Copy response headers
@@ -379,7 +382,7 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("Events stream error: %v", err)
+				log.Errorf("Events stream error: %v", err)
 			}
 			return
 		}
@@ -403,7 +406,7 @@ func (s *Server) streamResponse(w http.ResponseWriter, body io.Reader) {
 		}
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("Stream error: %v", err)
+				log.Errorf("Stream error: %v", err)
 			}
 			return
 		}
@@ -471,9 +474,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		log.Printf("--> %s %s", r.Method, r.URL.Path)
+		log.Debugf("--> %s %s", r.Method, r.URL.Path)
 		next.ServeHTTP(w, r)
-		log.Printf("<-- %s %s (%s)", r.Method, r.URL.Path, time.Since(start))
+		log.Debugf("<-- %s %s (%s)", r.Method, r.URL.Path, time.Since(start))
 	})
 }
 

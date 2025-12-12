@@ -300,6 +300,7 @@ Hawser is configured via environment variables:
 | `REQUEST_TIMEOUT` | Request timeout in seconds | `30` |
 | `RECONNECT_DELAY` | Initial reconnect delay (Edge mode) | `1` |
 | `MAX_RECONNECT_DELAY` | Maximum reconnect delay | `60` |
+| `LOG_LEVEL` | Logging level: `debug`, `info`, `warn`, `error` | `info` |
 
 ### Mode Detection
 
@@ -307,6 +308,34 @@ Hawser automatically detects the operational mode:
 
 - If `DOCKHAND_SERVER_URL` and `TOKEN` are set → **Edge Mode**
 - Otherwise → **Standard Mode**
+
+### Log Levels
+
+The `LOG_LEVEL` environment variable controls verbosity:
+
+| Level | Description |
+|-------|-------------|
+| `debug` | All messages including Docker API calls (method, path, status codes) |
+| `info` | Standard operational messages (connections, startup, shutdown) |
+| `warn` | Warnings only |
+| `error` | Errors only |
+
+**Example: Debug mode**
+
+```bash
+# Binary
+LOG_LEVEL=debug hawser --port 2376
+
+# Docker
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 2376:2376 \
+  -e LOG_LEVEL=debug \
+  ghcr.io/finsys/hawser:latest
+```
+
+Debug mode logs all Docker API requests, which is useful for troubleshooting connectivity issues.
 
 ## Features
 

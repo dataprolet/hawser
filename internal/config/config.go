@@ -34,6 +34,9 @@ type Config struct {
 	ReconnectDelay    int // Initial reconnect delay, default: 1
 	MaxReconnectDelay int // Max reconnect delay, default: 60
 
+	// Logging
+	LogLevel string // debug, info, warn, error. Default: info
+
 	// Version info (set by main.go from ldflags)
 	Version string
 	Commit  string
@@ -64,6 +67,9 @@ func Load() (*Config, error) {
 		RequestTimeout:    getEnvInt("REQUEST_TIMEOUT", 30),
 		ReconnectDelay:    getEnvInt("RECONNECT_DELAY", 1),
 		MaxReconnectDelay: getEnvInt("MAX_RECONNECT_DELAY", 60),
+
+		// Logging
+		LogLevel: getEnvString("LOG_LEVEL", "info"),
 	}
 
 	// Validate configuration

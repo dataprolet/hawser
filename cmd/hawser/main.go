@@ -8,6 +8,7 @@ import (
 
 	"github.com/Finsys/hawser/internal/config"
 	"github.com/Finsys/hawser/internal/edge"
+	"github.com/Finsys/hawser/internal/log"
 	"github.com/Finsys/hawser/internal/server"
 )
 
@@ -22,6 +23,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Initialize logger before anything else
+	log.Init(cfg.LogLevel)
 
 	// Set version info from ldflags
 	cfg.Version = version
@@ -38,13 +42,13 @@ func main() {
 
 	if cfg.EdgeMode() {
 		// Edge mode: connect outbound to Dockhand server
-		fmt.Printf("Starting in Edge mode, connecting to %s\n", cfg.DockhandServerURL)
+		log.Infof("Starting in Edge mode, connecting to %s", cfg.DockhandServerURL)
 		go func() {
 			errChan <- edge.Run(cfg, stop)
 		}()
 	} else {
 		// Standard mode: listen for incoming connections
-		fmt.Printf("Starting in Standard mode on port %d\n", cfg.Port)
+		log.Infof("Starting in Standard mode on port %d", cfg.Port)
 		go func() {
 			errChan <- server.Run(cfg, stop)
 		}()
@@ -53,15 +57,15 @@ func main() {
 	// Wait for shutdown signal or error
 	select {
 	case <-stop:
-		fmt.Println("\nShutdown signal received, stopping...")
+		log.Info("Shutdown signal received, stopping...")
 	case err := <-errChan:
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			log.Errorf("Error: %v", err)
 			os.Exit(1)
 		}
 	}
 
-	fmt.Println("Hawser stopped")
+	log.Info("Hawser stopped")
 }
 
 func printBanner(cfg *config.Config) {
@@ -74,5 +78,6 @@ func printBanner(cfg *config.Config) {
 	fmt.Printf("Agent ID: %s\n", cfg.AgentID)
 	fmt.Printf("Agent Name: %s\n", cfg.AgentName)
 	fmt.Printf("Docker Socket: %s\n", cfg.DockerSocket)
+	fmt.Printf("Log Level: %s\n", log.GetLevel())
 	fmt.Println()
 }
