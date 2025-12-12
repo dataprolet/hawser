@@ -70,13 +70,10 @@ if [ ! -f "$CONFIG_DIR/config" ]; then
 # Docker socket path
 DOCKER_SOCKET=/var/run/docker.sock
 
-# Agent identification (optional)
-# AGENT_NAME=my-server
-
 #################### Standard Mode (comment out for Edge mode) ####################
 PORT=2376
 
-# TLS configuration (optional)
+# TLS configuration (optional, Standard mode only)
 # TLS_CERT=/etc/hawser/server.crt
 # TLS_KEY=/etc/hawser/server.key
 
@@ -85,7 +82,10 @@ PORT=2376
 
 ################# Edge Mode (uncomment and configure for Edge mode) ###############
 # DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect
-# TOKEN=your-agent-token
+# TOKEN=your-agent-token-taken-from-dockhand
+
+# Agent identification (optional)
+# AGENT_NAME=my-server
 EOF
 fi
 
