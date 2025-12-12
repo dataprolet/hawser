@@ -15,7 +15,10 @@ import (
 
 // ComposeClient handles Docker Compose operations
 type ComposeClient struct {
-	dockerSocket string
+	dockerSocket  string
+	composeCmd    string   // "docker" for v2, "docker-compose" for v1
+	composeArgs   []string // ["compose"] for v2, [] for v1
+	composeChecked bool
 }
 
 // NewComposeClient creates a new Compose client
@@ -23,6 +26,36 @@ func NewComposeClient(dockerSocket string) *ComposeClient {
 	return &ComposeClient{
 		dockerSocket: dockerSocket,
 	}
+}
+
+// detectComposeCommand checks which compose command is available
+// Tries docker compose (v2) first, then docker-compose (v1)
+func (c *ComposeClient) detectComposeCommand() error {
+	if c.composeChecked {
+		return nil
+	}
+
+	// Try docker compose (v2) first
+	cmd := exec.Command("docker", "compose", "version")
+	if err := cmd.Run(); err == nil {
+		c.composeCmd = "docker"
+		c.composeArgs = []string{"compose"}
+		c.composeChecked = true
+		log.Debugf("Using docker compose (v2)")
+		return nil
+	}
+
+	// Try docker-compose (v1)
+	cmd = exec.Command("docker-compose", "version")
+	if err := cmd.Run(); err == nil {
+		c.composeCmd = "docker-compose"
+		c.composeArgs = []string{}
+		c.composeChecked = true
+		log.Debugf("Using docker-compose (v1)")
+		return nil
+	}
+
+	return fmt.Errorf("Docker Compose is not installed. Please install either 'docker compose' (v2) or 'docker-compose' (v1)")
 }
 
 // ComposeOperation represents a compose operation request
@@ -45,6 +78,15 @@ type ComposeResult struct {
 
 // Execute runs a Docker Compose operation
 func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*ComposeResult, error) {
+	// Detect compose command on first use
+	if err := c.detectComposeCommand(); err != nil {
+		return &ComposeResult{
+			Success:  false,
+			Error:    err.Error(),
+			ExitCode: 1,
+		}, nil
+	}
+
 	// Build command arguments
 	args := []string{}
 
@@ -94,8 +136,11 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	// Add specific services if specified
 	args = append(args, op.Services...)
 
-	// Execute docker compose command
-	cmd := exec.CommandContext(ctx, "docker", append([]string{"compose"}, args...)...)
+	// Build full command args: composeArgs + args
+	fullArgs := append(c.composeArgs, args...)
+
+	// Execute compose command
+	cmd := exec.CommandContext(ctx, c.composeCmd, fullArgs...)
 
 	// Set working directory
 	if op.WorkDir != "" {
@@ -106,7 +151,7 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	cmd.Env = append(os.Environ(), fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket))
 
 	// Log the command being executed
-	log.Debugf("Compose: docker compose %s (project=%s)", strings.Join(args, " "), op.ProjectName)
+	log.Debugf("Compose: %s %s (project=%s)", c.composeCmd, strings.Join(fullArgs, " "), op.ProjectName)
 
 	// Capture output
 	var stdout, stderr bytes.Buffer
@@ -168,13 +213,21 @@ type ComposeService struct {
 
 // IsAvailable checks if docker compose is available
 func (c *ComposeClient) IsAvailable() bool {
-	cmd := exec.Command("docker", "compose", "version")
-	return cmd.Run() == nil
+	return c.detectComposeCommand() == nil
 }
 
 // GetVersion returns docker compose version
 func (c *ComposeClient) GetVersion() (string, error) {
-	cmd := exec.Command("docker", "compose", "version", "--short")
+	if err := c.detectComposeCommand(); err != nil {
+		return "", err
+	}
+
+	var cmd *exec.Cmd
+	if c.composeCmd == "docker" {
+		cmd = exec.Command("docker", "compose", "version", "--short")
+	} else {
+		cmd = exec.Command("docker-compose", "version", "--short")
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
