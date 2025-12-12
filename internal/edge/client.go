@@ -623,12 +623,24 @@ func (c *Client) readExecOutput(session *ExecSession) {
 
 // handleExecInput handles terminal input from user
 func (c *Client) handleExecInput(msg *protocol.ExecInputMessage) {
-	c.execSessionsMu.RLock()
-	session, ok := c.execSessions[msg.ExecID]
-	c.execSessionsMu.RUnlock()
+	// Retry a few times since input may arrive before exec session is fully stored
+	var session *ExecSession
+	var ok bool
+	for i := 0; i < 10; i++ {
+		c.execSessionsMu.RLock()
+		session, ok = c.execSessions[msg.ExecID]
+		c.execSessionsMu.RUnlock()
+
+		if ok {
+			break
+		}
+
+		// Wait a bit for session to be created
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	if !ok {
-		log.Warnf("Exec session not found: %s", msg.ExecID)
+		log.Warnf("Exec session not found after retries: %s", msg.ExecID)
 		return
 	}
 
@@ -649,12 +661,24 @@ func (c *Client) handleExecInput(msg *protocol.ExecInputMessage) {
 
 // handleExecResize handles terminal resize
 func (c *Client) handleExecResize(msg *protocol.ExecResizeMessage) {
-	c.execSessionsMu.RLock()
-	session, ok := c.execSessions[msg.ExecID]
-	c.execSessionsMu.RUnlock()
+	// Retry a few times since resize may arrive before exec session is fully stored
+	var session *ExecSession
+	var ok bool
+	for i := 0; i < 10; i++ {
+		c.execSessionsMu.RLock()
+		session, ok = c.execSessions[msg.ExecID]
+		c.execSessionsMu.RUnlock()
+
+		if ok {
+			break
+		}
+
+		// Wait a bit for session to be created
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	if !ok {
-		log.Warnf("Exec session not found for resize: %s", msg.ExecID)
+		log.Warnf("Exec session not found for resize after retries: %s", msg.ExecID)
 		return
 	}
 
