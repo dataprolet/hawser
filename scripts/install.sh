@@ -119,19 +119,24 @@ EOF
 
     echo "Reloading systemd..."
     sudo systemctl daemon-reload
-
-    echo ""
-    echo "Systemd service installed. To start Hawser:"
-    echo "  1. Edit /etc/hawser/config with your settings"
-    echo "  2. sudo systemctl enable --now hawser"
-    echo "  3. sudo systemctl status hawser"
 fi
 
 echo ""
 echo "Hawser installed successfully!"
 echo ""
-echo "Quick start:"
-echo "  Standard mode: hawser --port 2375"
-echo "  Edge mode:     hawser --server wss://... --token your-token"
+echo "Configuration: $CONFIG_DIR/config"
 echo ""
-echo "Configuration file: $CONFIG_DIR/config"
+
+if command -v systemctl &> /dev/null; then
+    echo "Service management:"
+    echo "  sudo systemctl start hawser    # Start the service"
+    echo "  sudo systemctl stop hawser     # Stop the service"
+    echo "  sudo systemctl status hawser   # Check service status"
+    echo "  sudo systemctl enable hawser   # Enable on boot"
+    echo "  sudo journalctl -u hawser -f   # View logs"
+    echo ""
+fi
+
+echo "Manual run (for testing):"
+echo "  Standard mode: hawser --port 2376"
+echo "  Edge mode:     hawser --server wss://... --token your-token"
