@@ -482,14 +482,24 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 
 // handleCompose handles Docker Compose operations
 func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(docker.ComposeResult{
+			Success: false,
+			Error:   "Method not allowed",
+		})
 		return
 	}
 
 	var op docker.ComposeOperation
 	if err := json.NewDecoder(r.Body).Decode(&op); err != nil {
-		http.Error(w, "Invalid request body: "+err.Error(), http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(docker.ComposeResult{
+			Success: false,
+			Error:   "Invalid request body: " + err.Error(),
+		})
 		return
 	}
 
@@ -497,11 +507,14 @@ func (s *Server) handleCompose(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.compose.Execute(r.Context(), &op)
 	if err != nil {
-		http.Error(w, "Compose error: "+err.Error(), http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(docker.ComposeResult{
+			Success: false,
+			Error:   "Compose error: " + err.Error(),
+		})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	if !result.Success {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
