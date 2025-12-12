@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Finsys/hawser/internal/pool"
 	"github.com/Finsys/hawser/internal/protocol"
 )
 
@@ -172,7 +173,11 @@ func (t *ExecTunnel) Start(ctx context.Context, tty bool) error {
 func (t *ExecTunnel) readLoop(ctx context.Context) {
 	defer t.Close()
 
-	buf := make([]byte, 4096)
+	// Use pooled buffer for reading
+	bufPtr := pool.GetBuffer()
+	defer pool.PutBuffer(bufPtr)
+	buf := *bufPtr
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -264,9 +269,3 @@ func (c *Client) HandleExecInput(requestID string, data []byte) error {
 	return nil
 }
 
-// HandleExecResize processes resize events for an active exec session
-func (c *Client) HandleExecResize(requestID string, width, height int) error {
-	// Find the tunnel for this request
-	// This would need additional tracking in a real implementation
-	return nil
-}

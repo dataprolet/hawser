@@ -17,6 +17,7 @@ import (
 	"github.com/Finsys/hawser/internal/docker"
 	"github.com/Finsys/hawser/internal/log"
 	"github.com/Finsys/hawser/internal/metrics"
+	"github.com/Finsys/hawser/internal/pool"
 	"github.com/Finsys/hawser/internal/protocol"
 	"github.com/gorilla/websocket"
 )
@@ -234,6 +235,12 @@ func (c *Client) run() {
 	// Start events sender
 	go c.eventsLoop(done)
 
+	// Calculate read deadline based on heartbeat interval (2x to allow for network delays)
+	readDeadline := time.Duration(c.cfg.HeartbeatInterval*2) * time.Second
+	if readDeadline < 60*time.Second {
+		readDeadline = 60 * time.Second
+	}
+
 	// Message loop
 	for {
 		select {
@@ -244,7 +251,21 @@ func (c *Client) run() {
 		default:
 		}
 
-		_, data, err := c.conn.ReadMessage()
+		// Get connection reference under lock for thread safety
+		c.mu.Lock()
+		conn := c.conn
+		c.mu.Unlock()
+
+		if conn == nil {
+			log.Errorf("Connection is nil")
+			close(done)
+			return
+		}
+
+		// Set read deadline to detect dead connections
+		conn.SetReadDeadline(time.Now().Add(readDeadline))
+
+		_, data, err := conn.ReadMessage()
 		if err != nil {
 			log.Errorf("Read error: %v", err)
 			close(done)
@@ -279,7 +300,9 @@ func (c *Client) handleMessage(data []byte) {
 		if err := json.Unmarshal(data, &ping); err != nil {
 			return
 		}
-		c.sendJSON(protocol.NewPongMessage(time.Now().Unix()))
+		if err := c.sendJSON(protocol.NewPongMessage(time.Now().Unix())); err != nil {
+			log.Warnf("Failed to send pong: %v", err)
+		}
 
 	case protocol.TypeStreamEnd:
 		var end protocol.StreamEndMessage
@@ -409,8 +432,11 @@ func (c *Client) handleStreamingRequest(ctx context.Context, req *protocol.Reque
 	}
 	defer resp.Body.Close()
 
-	// Stream data back
-	buf := make([]byte, 4096)
+	// Stream data back using pooled buffer
+	bufPtr := pool.GetBuffer()
+	defer pool.PutBuffer(bufPtr)
+	buf := *bufPtr
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -479,7 +505,9 @@ func (c *Client) heartbeatLoop(done <-chan struct{}) {
 		case <-done:
 			return
 		case <-ticker.C:
-			c.sendJSON(protocol.NewPingMessage(time.Now().Unix()))
+			if err := c.sendJSON(protocol.NewPingMessage(time.Now().Unix())); err != nil {
+				log.Warnf("Failed to send ping: %v", err)
+			}
 		}
 	}
 }
@@ -499,7 +527,9 @@ func (c *Client) metricsLoop(done <-chan struct{}) {
 				log.Warnf("Failed to collect metrics: %v", err)
 				continue
 			}
-			c.sendJSON(protocol.NewMetricsMessage(time.Now().Unix(), *hostMetrics))
+			if err := c.sendJSON(protocol.NewMetricsMessage(time.Now().Unix(), *hostMetrics)); err != nil {
+				log.Warnf("Failed to send metrics: %v", err)
+			}
 		}
 	}
 }
@@ -569,8 +599,10 @@ func isExcludedContainer(name string) bool {
 
 // eventsLoop streams Docker container events to Dockhand
 func (c *Client) eventsLoop(done <-chan struct{}) {
-	reconnectDelay := 5 * time.Second
+	initialDelay := 5 * time.Second
+	reconnectDelay := initialDelay
 	maxReconnectDelay := 60 * time.Second
+	minSuccessDuration := 30 * time.Second // Reset backoff if connected for this long
 
 	for {
 		select {
@@ -579,9 +611,17 @@ func (c *Client) eventsLoop(done <-chan struct{}) {
 		default:
 		}
 
+		startTime := time.Now()
 		err := c.streamEvents(done)
+		connectionDuration := time.Since(startTime)
+
 		if err != nil {
 			log.Warnf("Docker events stream error: %v", err)
+		}
+
+		// Reset backoff if we were connected successfully for a while
+		if connectionDuration >= minSuccessDuration {
+			reconnectDelay = initialDelay
 		}
 
 		// Check if we should stop before reconnecting
@@ -603,10 +643,14 @@ func (c *Client) streamEvents(done <-chan struct{}) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Monitor done channel
+	// Monitor done channel - use select to avoid goroutine leak
 	go func() {
-		<-done
-		cancel()
+		select {
+		case <-done:
+			cancel()
+		case <-ctx.Done():
+			// Context was cancelled, exit goroutine cleanly
+		}
 	}()
 
 	// Connect to Docker events stream with type=container filter
@@ -682,7 +726,9 @@ func (c *Client) streamEvents(done <-chan struct{}) error {
 		})
 
 		log.Debugf("Container event: %s %s (%s)", action, containerName, image)
-		c.sendJSON(eventMsg)
+		if err := c.sendJSON(eventMsg); err != nil {
+			log.Warnf("Failed to send container event: %v", err)
+		}
 	}
 }
 
@@ -796,7 +842,11 @@ func (c *Client) readExecOutput(session *ExecSession) {
 		c.sendJSON(protocol.NewExecOutputMessage(session.ExecID, session.Conn.Leftover))
 	}
 
-	buf := make([]byte, 4096)
+	// Use pooled buffer for reading exec output
+	bufPtr := pool.GetBuffer()
+	defer pool.PutBuffer(bufPtr)
+	buf := *bufPtr
+
 	for {
 		n, err := session.Conn.Conn.Read(buf)
 		if n > 0 {

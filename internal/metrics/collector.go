@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 // Collector gathers host metrics
 type Collector struct {
 	dockerClient *docker.Client
+	mu           sync.Mutex // Protects prevCPU and prevTime
 	prevCPU      *cpuStats
 	prevTime     time.Time
 }
@@ -111,6 +113,10 @@ func (c *Collector) collectCPU() (float64, error) {
 				idle:   idle,
 				iowait: iowait,
 			}
+
+			// Lock mutex for thread-safe access to prevCPU and prevTime
+			c.mu.Lock()
+			defer c.mu.Unlock()
 
 			if c.prevCPU == nil {
 				c.prevCPU = current

@@ -21,6 +21,9 @@ type Client struct {
 	apiVersion   string
 }
 
+// Default API version if negotiation fails
+const defaultAPIVersion = "v1.43"
+
 // NewClient creates a new Docker client
 func NewClient(socketPath string) (*Client, error) {
 	// Create HTTP transport for Unix socket
@@ -53,7 +56,7 @@ func NewClient(socketPath string) (*Client, error) {
 			Transport: streamTransport,
 			Timeout:   0, // No timeout for streaming
 		},
-		apiVersion: "v1.43", // Docker API version
+		apiVersion: defaultAPIVersion, // Will be negotiated below
 	}
 
 	// Verify connection
@@ -61,7 +64,28 @@ func NewClient(socketPath string) (*Client, error) {
 		return nil, fmt.Errorf("failed to connect to Docker: %w", err)
 	}
 
+	// Negotiate API version with Docker daemon
+	if err := client.negotiateAPIVersion(context.Background()); err != nil {
+		log.Warnf("Failed to negotiate API version, using default %s: %v", defaultAPIVersion, err)
+	}
+
 	return client, nil
+}
+
+// negotiateAPIVersion queries Docker for supported API version and uses a compatible one
+func (c *Client) negotiateAPIVersion(ctx context.Context) error {
+	version, err := c.GetVersion(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Use Docker's reported API version if available
+	if version.APIVersion != "" {
+		c.apiVersion = "v" + version.APIVersion
+		log.Debugf("Negotiated API version: %s (Docker %s)", c.apiVersion, version.Version)
+	}
+
+	return nil
 }
 
 // Ping checks Docker daemon connectivity

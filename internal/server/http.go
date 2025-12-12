@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/Finsys/hawser/internal/config"
 	"github.com/Finsys/hawser/internal/docker"
 	"github.com/Finsys/hawser/internal/log"
+	"github.com/Finsys/hawser/internal/pool"
 )
 
 // Server represents the Standard mode HTTP server
@@ -370,8 +372,11 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush() // Flush headers immediately
 	}
 
-	// Stream the body (resp.Body automatically decodes chunked encoding)
-	buf := make([]byte, 4096)
+	// Stream the body using pooled buffer (resp.Body automatically decodes chunked encoding)
+	bufPtr := pool.GetBuffer()
+	defer pool.PutBuffer(bufPtr)
+	buf := *bufPtr
+
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
@@ -397,7 +402,11 @@ func (s *Server) streamResponse(w http.ResponseWriter, body io.Reader) {
 		return
 	}
 
-	buf := make([]byte, 4096)
+	// Use pooled buffer for streaming
+	bufPtr := pool.GetBuffer()
+	defer pool.PutBuffer(bufPtr)
+	buf := *bufPtr
+
 	for {
 		n, err := body.Read(buf)
 		if n > 0 {
@@ -460,7 +469,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				token = r.URL.Query().Get("token")
 			}
 
-			if token != s.cfg.Token {
+			// Use constant-time comparison to prevent timing attacks
+			if subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) != 1 {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
