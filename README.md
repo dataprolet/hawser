@@ -436,3 +436,9 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - [Dockhand](https://dockhand.pro) - Modern Docker management application
 - [Docker Engine API](https://docs.docker.com/engine/api/) - Docker API documentation
+
+---
+
+<p align="center">
+  Made with ❤️ and mass amounts of ☕ by Finsys for <a href="https://dockhand.pro">Dockhand</a>
+</p>
