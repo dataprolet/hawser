@@ -529,11 +529,12 @@ func (c *Client) sendJSON(v interface{}) error {
 
 // handleExecStart starts a new exec session
 func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
-	log.Infof("Starting exec session: %s in container %s", msg.ExecID, msg.ContainerID)
+	log.Infof("Starting exec session: %s in container %s (cmd: %s, user: %s)", msg.ExecID, msg.ContainerID, msg.Cmd, msg.User)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create exec instance
+	log.Debugf("Creating Docker exec for session %s", msg.ExecID)
 	execResp, err := c.dockerClient.CreateExec(ctx, &docker.ExecConfig{
 		ContainerID: msg.ContainerID,
 		Cmd:         []string{msg.Cmd},
@@ -547,9 +548,10 @@ func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 		return
 	}
 
-	log.Debugf("Created Docker exec: %s", execResp.ID)
+	log.Debugf("Created Docker exec: %s for session %s", execResp.ID, msg.ExecID)
 
 	// Start exec with hijack
+	log.Debugf("Starting exec attach for session %s", msg.ExecID)
 	hijacked, err := c.dockerClient.StartExecAttach(ctx, execResp.ID)
 	if err != nil {
 		log.Errorf("Failed to start exec: %v", err)
@@ -557,6 +559,7 @@ func (c *Client) handleExecStart(msg *protocol.ExecStartMessage) {
 		cancel()
 		return
 	}
+	log.Debugf("Exec attach successful for session %s", msg.ExecID)
 
 	// Resize terminal to initial size
 	if msg.Cols > 0 && msg.Rows > 0 {
