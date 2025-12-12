@@ -302,6 +302,9 @@ func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedC
 		return nil, fmt.Errorf("failed to connect to Docker socket: %w", err)
 	}
 
+	// Set read deadline for initial header parsing to prevent indefinite hangs
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+
 	// Build the HTTP request manually for hijacking
 	path := fmt.Sprintf("/%s/exec/%s/start", c.apiVersion, execID)
 	body := `{"Detach":false,"Tty":true}`
@@ -365,6 +368,9 @@ func (c *Client) StartExecAttach(ctx context.Context, execID string) (*HijackedC
 		leftover = headerBuf[headerEnd:]
 	}
 
+	// Clear the read deadline for streaming - connection can now stream indefinitely
+	conn.SetReadDeadline(time.Time{})
+
 	return &HijackedConn{
 		Conn:     conn,
 		Leftover: leftover,
@@ -379,6 +385,9 @@ func (c *Client) ResizeExec(ctx context.Context, execID string, height, width in
 		return err
 	}
 	defer resp.Body.Close()
+
+	// Drain body to enable HTTP connection reuse
+	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("resize failed with status %d", resp.StatusCode)

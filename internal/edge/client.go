@@ -205,7 +205,9 @@ func (c *Client) waitForWelcome() error {
 
 	if msgType == protocol.TypeError {
 		var errMsg protocol.ErrorMessage
-		json.Unmarshal(data, &errMsg)
+		if err := json.Unmarshal(data, &errMsg); err != nil {
+			return fmt.Errorf("server error (failed to parse error message: %v)", err)
+		}
 		return fmt.Errorf("server error: %s", errMsg.Error)
 	}
 
@@ -937,16 +939,15 @@ func (c *Client) handleExecEnd(msg *protocol.ExecEndMessage) {
 	session, ok := c.execSessions[msg.ExecID]
 	if ok {
 		delete(c.execSessions, msg.ExecID)
-	}
-	c.execSessionsMu.Unlock()
-
-	if ok {
+		// Close connection and cancel while holding the lock to prevent race
+		// with readExecOutput which may still be reading from the connection
 		log.Infof("Closing exec session: %s (reason: %s)", msg.ExecID, msg.Reason)
 		if session.Conn != nil && session.Conn.Conn != nil {
 			session.Conn.Conn.Close()
 		}
 		session.Cancel()
 	}
+	c.execSessionsMu.Unlock()
 }
 
 // close closes the WebSocket connection

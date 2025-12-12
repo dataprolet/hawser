@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/Finsys/hawser/internal/log"
 	"github.com/Finsys/hawser/internal/pool"
 	"github.com/Finsys/hawser/internal/protocol"
 )
@@ -130,25 +131,49 @@ func (t *ExecTunnel) Start(ctx context.Context, tty bool) error {
 		t.execID, len(startBody), startBody,
 	)
 
+	// Set read deadline for initial header parsing
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+
 	if _, err := conn.Write([]byte(req)); err != nil {
 		conn.Close()
 		return fmt.Errorf("failed to send exec start: %w", err)
 	}
 
-	// Read HTTP response headers
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to read response: %w", err)
+	// Read HTTP response headers - buffer until we find \r\n\r\n
+	headerBuf := make([]byte, 0, 4096)
+	tempBuf := make([]byte, 1024)
+	headerEnd := -1
+
+	for {
+		n, err := conn.Read(tempBuf)
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("failed to read response: %w", err)
+		}
+		headerBuf = append(headerBuf, tempBuf[:n]...)
+
+		// Look for end of HTTP headers
+		if idx := strings.Index(string(headerBuf), "\r\n\r\n"); idx != -1 {
+			headerEnd = idx + 4
+			break
+		}
+
+		// Safety check - headers shouldn't be this long
+		if len(headerBuf) > 8192 {
+			conn.Close()
+			return fmt.Errorf("HTTP headers too long")
+		}
 	}
 
 	// Check for 101 Switching Protocols
-	response := string(buf[:n])
+	response := string(headerBuf[:headerEnd])
 	if !strings.Contains(response, "101") {
 		conn.Close()
 		return fmt.Errorf("exec start failed: %s", response)
 	}
+
+	// Clear the read deadline for streaming
+	conn.SetReadDeadline(time.Time{})
 
 	// Register stream
 	t.client.streamsMu.Lock()
@@ -193,7 +218,7 @@ func (t *ExecTunnel) readLoop(ctx context.Context) {
 		}
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("Exec read error: %v", err)
+				log.Warnf("Exec read error: %v", err)
 			}
 			return
 		}
@@ -224,7 +249,10 @@ func (t *ExecTunnel) Resize(width, height int) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+
+	// Drain body to enable HTTP connection reuse
+	io.Copy(io.Discard, resp.Body)
 	return nil
 }
 
