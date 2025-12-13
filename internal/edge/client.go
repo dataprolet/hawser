@@ -306,6 +306,10 @@ func (c *Client) handleMessage(data []byte) {
 			log.Warnf("Failed to send pong: %v", err)
 		}
 
+	case protocol.TypePong:
+		// Server responded to our ping - just acknowledge receipt (keeps read deadline alive)
+		log.Debugf("Received pong from server")
+
 	case protocol.TypeStreamEnd:
 		var end protocol.StreamEndMessage
 		if err := json.Unmarshal(data, &end); err != nil {
