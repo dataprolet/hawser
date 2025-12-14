@@ -56,6 +56,18 @@ TLS_CERT=/path/to/server.crt TLS_KEY=/path/to/server.key TOKEN=your-secret-token
 hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
 ```
 
+**Edge Mode with Self-Signed Certificate:**
+
+```bash
+CA_CERT=/path/to/dockhand-ca.crt hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
+```
+
+**Edge Mode with TLS Skip Verify** (insecure, for testing):
+
+```bash
+TLS_SKIP_VERIFY=true hawser --server wss://your-dockhand.example.com/api/hawser/connect --token your-token
+```
+
 ### Systemd Service
 
 #### Quick Install
@@ -164,6 +176,10 @@ DOCKER_SOCKET=/var/run/docker.sock
 
 # Agent identification (optional)
 # AGENT_NAME=my-server
+
+# TLS configuration for self-signed Dockhand (optional)
+# CA_CERT=/etc/hawser/dockhand-ca.crt
+# TLS_SKIP_VERIFY=false
 
 # Connection settings (optional)
 # HEARTBEAT_INTERVAL=30
@@ -282,6 +298,19 @@ docker run -d \
   ghcr.io/finsys/hawser:latest
 ```
 
+**Edge Mode with Self-Signed Certificate:**
+
+```bash
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /path/to/dockhand-ca.crt:/certs/ca.crt:ro \
+  -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
+  -e TOKEN=your-agent-token \
+  -e CA_CERT=/certs/ca.crt \
+  ghcr.io/finsys/hawser:latest
+```
+
 ## Configuration
 
 Hawser is configured via environment variables:
@@ -290,9 +319,11 @@ Hawser is configured via environment variables:
 |----------|-------------|---------|
 | `DOCKHAND_SERVER_URL` | WebSocket URL for Edge mode | - |
 | `TOKEN` | Authentication token | - |
+| `CA_CERT` | Path to CA certificate for Edge mode (self-signed Dockhand) | - |
+| `TLS_SKIP_VERIFY` | Skip TLS verification for Edge mode (insecure) | `false` |
 | `PORT` | HTTP server port (Standard mode) | `2376` |
-| `TLS_CERT` | Path to TLS certificate | - |
-| `TLS_KEY` | Path to TLS private key | - |
+| `TLS_CERT` | Path to TLS certificate (Standard mode server cert) | - |
+| `TLS_KEY` | Path to TLS private key (Standard mode server key) | - |
 | `DOCKER_SOCKET` | Docker socket path | `/var/run/docker.sock` |
 | `AGENT_ID` | Unique agent identifier | Auto-generated UUID |
 | `AGENT_NAME` | Human-readable agent name | Hostname |

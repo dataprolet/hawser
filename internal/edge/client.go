@@ -3,6 +3,8 @@ package edge
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -134,6 +136,33 @@ func (c *Client) connect() error {
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
+	}
+
+	// Configure TLS if needed (for wss:// connections)
+	if strings.HasPrefix(c.cfg.DockhandServerURL, "wss://") {
+		tlsConfig := &tls.Config{}
+
+		// Skip TLS verification if configured (insecure, for testing)
+		if c.cfg.TLSSkipVerify {
+			log.Warnf("TLS verification disabled - this is insecure!")
+			tlsConfig.InsecureSkipVerify = true
+		} else if c.cfg.CACert != "" {
+			// Load custom CA certificate for self-signed Dockhand servers
+			caCert, err := os.ReadFile(c.cfg.CACert)
+			if err != nil {
+				return fmt.Errorf("failed to read CA certificate: %w", err)
+			}
+
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return fmt.Errorf("failed to parse CA certificate")
+			}
+
+			tlsConfig.RootCAs = caCertPool
+			log.Infof("Using custom CA certificate: %s", c.cfg.CACert)
+		}
+
+		dialer.TLSClientConfig = tlsConfig
 	}
 
 	conn, _, err := dialer.Dial(c.cfg.DockhandServerURL, nil)

@@ -14,6 +14,8 @@ type Config struct {
 	// Edge Mode (active connection to Dockhand)
 	DockhandServerURL string // e.g., wss://dockhand.example.com/api/hawser/connect
 	Token             string // Agent authentication token
+	CACert            string // Optional CA certificate path (for self-signed Dockhand)
+	TLSSkipVerify     bool   // Skip TLS verification (insecure, for testing)
 
 	// Standard Mode (passive HTTP server)
 	Port    int    // Default: 2376
@@ -48,6 +50,8 @@ func Load() (*Config, error) {
 		// Edge mode
 		DockhandServerURL: os.Getenv("DOCKHAND_SERVER_URL"),
 		Token:             os.Getenv("TOKEN"),
+		CACert:            os.Getenv("CA_CERT"),
+		TLSSkipVerify:     getEnvBool("TLS_SKIP_VERIFY", false),
 
 		// Standard mode
 		Port:    getEnvInt("PORT", 2376),
@@ -171,6 +175,18 @@ func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		switch strings.ToLower(value) {
+		case "true", "1", "yes", "on":
+			return true
+		case "false", "0", "no", "off":
+			return false
 		}
 	}
 	return defaultValue
