@@ -65,6 +65,7 @@ type ComposeOperation struct {
 	ComposeFile string            `json:"composeFile,omitempty"` // Content of compose file
 	Services    []string          `json:"services,omitempty"`    // Specific services to operate on
 	Options     map[string]string `json:"options,omitempty"`     // Additional options
+	EnvVars     map[string]string `json:"envVars,omitempty"`     // Environment variables for variable substitution
 }
 
 // ComposeResult is the result of a compose operation
@@ -143,6 +144,11 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 
 	// Set Docker socket environment
 	cmd.Env = append(os.Environ(), fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket))
+
+	// Add environment variables for compose variable substitution
+	for key, value := range op.EnvVars {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
+	}
 
 	// Log the command being executed
 	log.Debugf("Compose: %s %s (project=%s)", c.composeCmd, strings.Join(fullArgs, " "), op.ProjectName)
