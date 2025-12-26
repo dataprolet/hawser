@@ -503,6 +503,10 @@ Metrics are sent every 30 seconds in Edge mode.
 - **Heartbeat**: Regular keepalive messages maintain connection health
 - **Graceful shutdown**: Clean shutdown on SIGTERM/SIGINT
 
+### Docker API Version Compatibility
+
+Hawser automatically negotiates the Docker API version with the daemon. When running Docker Compose operations, Hawser sets the `DOCKER_API_VERSION` environment variable to match the daemon's reported API version. This ensures compatibility when the Docker CLI version differs from the daemon version - for example, when using an older Docker CLI with a newer Docker daemon that requires a higher minimum API version.
+
 ## API Endpoints
 
 ### Standard Mode

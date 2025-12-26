@@ -14,10 +14,11 @@ import (
 
 // ComposeClient handles Docker Compose operations
 type ComposeClient struct {
-	dockerSocket  string
-	composeCmd    string   // "docker" for v2, "docker-compose" for v1
-	composeArgs   []string // ["compose"] for v2, [] for v1
+	dockerSocket   string
+	composeCmd     string   // "docker" for v2, "docker-compose" for v1
+	composeArgs    []string // ["compose"] for v2, [] for v1
 	composeChecked bool
+	apiVersion     string // Docker API version to use (for version negotiation)
 }
 
 // NewComposeClient creates a new Compose client
@@ -25,6 +26,12 @@ func NewComposeClient(dockerSocket string) *ComposeClient {
 	return &ComposeClient{
 		dockerSocket: dockerSocket,
 	}
+}
+
+// SetAPIVersion sets the Docker API version to use for compose commands.
+// This enables compatibility when the docker CLI version differs from the daemon.
+func (c *ComposeClient) SetAPIVersion(version string) {
+	c.apiVersion = version
 }
 
 // detectComposeCommand checks which compose command is available
@@ -144,6 +151,13 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 
 	// Set Docker socket environment
 	cmd.Env = append(os.Environ(), fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket))
+
+	// Set API version for compatibility with newer Docker daemons
+	// This allows older docker CLI to work with newer daemons
+	if c.apiVersion != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("DOCKER_API_VERSION=%s", c.apiVersion))
+		log.Debugf("Compose: Using API version %s", c.apiVersion)
+	}
 
 	// Add environment variables for compose variable substitution
 	for key, value := range op.EnvVars {

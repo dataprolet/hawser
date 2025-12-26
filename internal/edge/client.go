@@ -80,10 +80,17 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 		log.Infof("Connected to Docker %s (API %s)", version.Version, version.APIVersion)
 	}
 
+	// Create compose client with API version negotiation
+	composeClient := docker.NewComposeClient(cfg.DockerSocket)
+	if version != nil && version.APIVersion != "" {
+		composeClient.SetAPIVersion(version.APIVersion)
+		log.Debugf("Compose client using API version %s", version.APIVersion)
+	}
+
 	client := &Client{
 		cfg:          cfg,
 		dockerClient: dockerClient,
-		compose:      docker.NewComposeClient(cfg.DockerSocket),
+		compose:      composeClient,
 		metrics:      metrics.NewCollector(dockerClient),
 		stop:         stop,
 		streams:      make(map[string]*StreamContext),
