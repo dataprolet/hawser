@@ -47,11 +47,12 @@ func Run(cfg *config.Config, stop <-chan os.Signal) error {
 	}
 
 	// Create compose client with API version negotiation
-	composeClient := docker.NewComposeClient(cfg.DockerSocket)
+	composeClient := docker.NewComposeClient(cfg.DockerSocket, cfg.StacksDir)
 	if version != nil && version.APIVersion != "" {
 		composeClient.SetAPIVersion(version.APIVersion)
 		log.Debugf("Compose client using API version %s", version.APIVersion)
 	}
+	log.Debugf("Compose stacks directory: %s", cfg.StacksDir)
 
 	server := &Server{
 		cfg:          cfg,

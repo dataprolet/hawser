@@ -39,6 +39,9 @@ type Config struct {
 	// Logging
 	LogLevel string // debug, info, warn, error. Default: info
 
+	// Stack files directory
+	StacksDir string // Directory for stack files, default: /tmp/stacks
+
 	// Version info (set by main.go from ldflags)
 	Version string
 	Commit  string
@@ -74,6 +77,9 @@ func Load() (*Config, error) {
 
 		// Logging
 		LogLevel: getEnvString("LOG_LEVEL", "info"),
+
+		// Stack files directory
+		StacksDir: getEnvString("STACKS_DIR", "/tmp/stacks"),
 	}
 
 	// Validate configuration

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/Finsys/hawser/internal/log"
@@ -19,12 +20,14 @@ type ComposeClient struct {
 	composeArgs    []string // ["compose"] for v2, [] for v1
 	composeChecked bool
 	apiVersion     string // Docker API version to use (for version negotiation)
+	stacksDir      string // Base directory for stack files
 }
 
 // NewComposeClient creates a new Compose client
-func NewComposeClient(dockerSocket string) *ComposeClient {
+func NewComposeClient(dockerSocket, stacksDir string) *ComposeClient {
 	return &ComposeClient{
 		dockerSocket: dockerSocket,
+		stacksDir:    stacksDir,
 	}
 }
 
@@ -70,6 +73,7 @@ type ComposeOperation struct {
 	ProjectName string            `json:"projectName"`
 	WorkDir     string            `json:"workDir"`
 	ComposeFile string            `json:"composeFile,omitempty"` // Content of compose file
+	Files       map[string]string `json:"files,omitempty"`       // All files to write (relative path -> content)
 	Services    []string          `json:"services,omitempty"`    // Specific services to operate on
 	Options     map[string]string `json:"options,omitempty"`     // Additional options
 	EnvVars     map[string]string `json:"envVars,omitempty"`     // Environment variables for variable substitution
@@ -102,10 +106,76 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		args = append(args, "-p", op.ProjectName)
 	}
 
-	// Handle compose file content via stdin (no temp file needed)
-	// Using -f - tells docker compose to read from stdin
+	// Determine if we should use file-based approach or stdin
 	var stdinContent string
-	if op.ComposeFile != "" {
+	var stackDir string
+
+	if len(op.Files) > 0 && c.stacksDir != "" {
+		// NEW: File-based approach - write all files to stack directory
+		stackDir = filepath.Join(c.stacksDir, op.ProjectName)
+
+		// Create stack directory
+		if err := os.MkdirAll(stackDir, 0755); err != nil {
+			return &ComposeResult{
+				Success:  false,
+				Error:    fmt.Sprintf("Failed to create stack directory: %v", err),
+				ExitCode: 1,
+			}, nil
+		}
+
+		// Write all files
+		for relPath, content := range op.Files {
+			filePath := filepath.Join(stackDir, relPath)
+
+			// Create parent directories if needed
+			if dir := filepath.Dir(filePath); dir != stackDir {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					return &ComposeResult{
+						Success:  false,
+						Error:    fmt.Sprintf("Failed to create directory for %s: %v", relPath, err),
+						ExitCode: 1,
+					}, nil
+				}
+			}
+
+			// Write file
+			if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+				return &ComposeResult{
+					Success:  false,
+					Error:    fmt.Sprintf("Failed to write file %s: %v", relPath, err),
+					ExitCode: 1,
+				}, nil
+			}
+			log.Debugf("Compose: Wrote file %s to %s", relPath, filePath)
+		}
+
+		log.Debugf("Compose: Wrote %d files to %s", len(op.Files), stackDir)
+
+		// Find the compose file in the written files
+		composeFileName := ""
+		for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+			if _, exists := op.Files[name]; exists {
+				composeFileName = name
+				break
+			}
+		}
+
+		if composeFileName != "" {
+			args = append(args, "-f", filepath.Join(stackDir, composeFileName))
+		} else if op.ComposeFile != "" {
+			// Fallback: write compose content to docker-compose.yml
+			composePath := filepath.Join(stackDir, "docker-compose.yml")
+			if err := os.WriteFile(composePath, []byte(op.ComposeFile), 0644); err != nil {
+				return &ComposeResult{
+					Success:  false,
+					Error:    fmt.Sprintf("Failed to write compose file: %v", err),
+					ExitCode: 1,
+				}, nil
+			}
+			args = append(args, "-f", composePath)
+		}
+	} else if op.ComposeFile != "" {
+		// LEGACY: stdin-based approach (no files provided)
 		stdinContent = op.ComposeFile
 		args = append(args, "-f", "-")
 	}
@@ -144,8 +214,10 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 	// Execute compose command
 	cmd := exec.CommandContext(ctx, c.composeCmd, fullArgs...)
 
-	// Set working directory
-	if op.WorkDir != "" {
+	// Set working directory (use stackDir if files were written, otherwise use WorkDir)
+	if stackDir != "" {
+		cmd.Dir = stackDir
+	} else if op.WorkDir != "" {
 		cmd.Dir = op.WorkDir
 	}
 
