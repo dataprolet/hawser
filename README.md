@@ -421,6 +421,7 @@ Hawser is configured via environment variables:
 | `TLS_CERT` | Path to TLS certificate (Standard mode server cert) | - |
 | `TLS_KEY` | Path to TLS private key (Standard mode server key) | - |
 | `DOCKER_SOCKET` | Docker socket path | `/var/run/docker.sock` |
+| `STACKS_DIR` | Directory for compose stack files (requires Dockhand 1.0.5+) | `/tmp/stacks` |
 | `AGENT_ID` | Unique agent identifier | Auto-generated UUID |
 | `AGENT_NAME` | Human-readable agent name | Hostname |
 | `HEARTBEAT_INTERVAL` | Heartbeat interval in seconds | `30` |
