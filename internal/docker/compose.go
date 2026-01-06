@@ -67,16 +67,24 @@ func (c *ComposeClient) detectComposeCommand() error {
 	return fmt.Errorf("Docker Compose is not installed. Please install either 'docker compose' (v2) or 'docker-compose' (v1)")
 }
 
+// RegistryCredentials holds credentials for a Docker registry
+type RegistryCredentials struct {
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 // ComposeOperation represents a compose operation request
 type ComposeOperation struct {
-	Operation   string            `json:"operation"` // up, down, pull, ps, logs
-	ProjectName string            `json:"projectName"`
-	WorkDir     string            `json:"workDir"`
-	ComposeFile string            `json:"composeFile,omitempty"` // Content of compose file
-	Files       map[string]string `json:"files,omitempty"`       // All files to write (relative path -> content)
-	Services    []string          `json:"services,omitempty"`    // Specific services to operate on
-	Options     map[string]string `json:"options,omitempty"`     // Additional options
-	EnvVars     map[string]string `json:"envVars,omitempty"`     // Environment variables for variable substitution
+	Operation   string                `json:"operation"` // up, down, pull, ps, logs
+	ProjectName string                `json:"projectName"`
+	WorkDir     string                `json:"workDir"`
+	ComposeFile string                `json:"composeFile,omitempty"` // Content of compose file
+	Files       map[string]string     `json:"files,omitempty"`       // All files to write (relative path -> content)
+	Services    []string              `json:"services,omitempty"`    // Specific services to operate on
+	Options     map[string]string     `json:"options,omitempty"`     // Additional options
+	EnvVars     map[string]string     `json:"envVars,omitempty"`     // Environment variables for variable substitution
+	Registries  []RegistryCredentials `json:"registries,omitempty"`  // Registry credentials for docker login
 }
 
 // ComposeResult is the result of a compose operation
@@ -85,6 +93,51 @@ type ComposeResult struct {
 	Output   string `json:"output"`
 	Error    string `json:"error,omitempty"`
 	ExitCode int    `json:"exitCode"`
+}
+
+// loginToRegistries logs into all provided registries before compose operations
+func (c *ComposeClient) loginToRegistries(ctx context.Context, registries []RegistryCredentials) {
+	if len(registries) == 0 {
+		return
+	}
+
+	for _, reg := range registries {
+		if reg.Username == "" || reg.Password == "" {
+			continue
+		}
+
+		// Extract host from URL
+		var registryHost string
+		if strings.HasPrefix(reg.URL, "http://") || strings.HasPrefix(reg.URL, "https://") {
+			// Parse as URL to extract host
+			parts := strings.SplitN(reg.URL, "://", 2)
+			if len(parts) == 2 {
+				registryHost = strings.Split(parts[1], "/")[0]
+			}
+		} else {
+			registryHost = reg.URL
+		}
+
+		if registryHost == "" {
+			log.Debugf("Compose: Skipping registry with empty host: %s", reg.URL)
+			continue
+		}
+
+		log.Debugf("Compose: Logging into registry %s", registryHost)
+
+		cmd := exec.CommandContext(ctx, "docker", "login", "-u", reg.Username, "--password-stdin", registryHost)
+		cmd.Env = append(os.Environ(), fmt.Sprintf("DOCKER_HOST=unix://%s", c.dockerSocket))
+		cmd.Stdin = strings.NewReader(reg.Password)
+
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+
+		if err := cmd.Run(); err != nil {
+			log.Debugf("Compose: Failed to login to %s: %s", registryHost, stderr.String())
+		} else {
+			log.Debugf("Compose: Successfully logged into %s", registryHost)
+		}
+	}
 }
 
 // Execute runs a Docker Compose operation
@@ -96,6 +149,11 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 			Error:    err.Error(),
 			ExitCode: 1,
 		}, nil
+	}
+
+	// Login to registries before up/pull operations
+	if op.Operation == "up" || op.Operation == "pull" {
+		c.loginToRegistries(ctx, op.Registries)
 	}
 
 	// Build command arguments
