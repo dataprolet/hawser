@@ -132,7 +132,7 @@ EnvironmentFile=/etc/hawser/config
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/run/docker.sock
+ReadWritePaths=/var/run/docker.sock /data/stacks
 
 [Install]
 WantedBy=multi-user.target
@@ -222,7 +222,7 @@ EnvironmentFile=/etc/hawser/config
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/run/docker.sock
+ReadWritePaths=/var/run/docker.sock /data/stacks
 
 [Install]
 WantedBy=multi-user.target

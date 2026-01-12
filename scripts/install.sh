@@ -60,6 +60,10 @@ sudo install -m 755 "$TMP_DIR/hawser" "$INSTALL_DIR/hawser"
 echo "Creating config directory..."
 sudo mkdir -p "$CONFIG_DIR"
 
+# Create stacks directory
+echo "Creating stacks directory..."
+sudo mkdir -p /data/stacks
+
 # Create default config file if it doesn't exist
 if [ ! -f "$CONFIG_DIR/config" ]; then
     echo "Creating default config file..."
@@ -115,7 +119,7 @@ EnvironmentFile=/etc/hawser/config
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/run/docker.sock
+ReadWritePaths=/var/run/docker.sock /data/stacks
 
 [Install]
 WantedBy=multi-user.target

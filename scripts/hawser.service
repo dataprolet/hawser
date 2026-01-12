@@ -21,7 +21,7 @@ SyslogIdentifier=hawser
 NoNewPrivileges=false
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/run/docker.sock
+ReadWritePaths=/var/run/docker.sock /data/stacks
 
 # Resource limits
 LimitNOFILE=65535
