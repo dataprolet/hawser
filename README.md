@@ -239,12 +239,15 @@ sudo journalctl -u hawser -f
 
 ### Docker
 
+> **Note:** Hawser stores compose stack files in `/data/stacks`. This is declared as a `VOLUME` in the image, so it's always writable. For persistent stack files, mount a host directory to this path.
+
 **Standard Mode** - Agent listens for connections:
 
 ```bash
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v hawser_stacks:/data/stacks \
   -p 2376:2376 \
   ghcr.io/finsys/hawser:latest
 ```
@@ -255,6 +258,7 @@ docker run -d \
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v hawser_stacks:/data/stacks \
   -p 2376:2376 \
   -e TOKEN=your-secret-token \
   ghcr.io/finsys/hawser:latest
@@ -266,6 +270,7 @@ docker run -d \
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v hawser_stacks:/data/stacks \
   -v /path/to/certs:/certs:ro \
   -p 2376:2376 \
   -e TLS_CERT=/certs/server.crt \
@@ -279,6 +284,7 @@ docker run -d \
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v hawser_stacks:/data/stacks \
   -v /path/to/certs:/certs:ro \
   -p 2376:2376 \
   -e TLS_CERT=/certs/server.crt \
@@ -293,6 +299,7 @@ docker run -d \
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v hawser_stacks:/data/stacks \
   -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
   -e TOKEN=your-agent-token \
   ghcr.io/finsys/hawser:latest
@@ -304,6 +311,7 @@ docker run -d \
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v hawser_stacks:/data/stacks \
   -v /path/to/dockhand-ca.crt:/certs/ca.crt:ro \
   -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
   -e TOKEN=your-agent-token \
@@ -327,6 +335,7 @@ docker build -f Dockerfile.dev -t hawser:local .
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v hawser_stacks:/data/stacks \
   -p 2376:2376 \
   hawser:local
 
@@ -334,6 +343,7 @@ docker run -d \
 docker run -d \
   --name hawser \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v hawser_stacks:/data/stacks \
   -e DOCKHAND_SERVER_URL=wss://your-dockhand.example.com/api/hawser/connect \
   -e TOKEN=your-agent-token \
   hawser:local

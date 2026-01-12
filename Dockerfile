@@ -15,6 +15,9 @@ COPY hawser /usr/local/bin/hawser
 # Create data directory for stacks
 RUN mkdir -p /data/stacks
 
+# Declare as volume to ensure writability even with --read-only
+VOLUME /data/stacks
+
 # Environment variables with defaults
 ENV PORT=2376 \
     DOCKER_SOCKET=/var/run/docker.sock \
