@@ -40,7 +40,7 @@ type Config struct {
 	LogLevel string // debug, info, warn, error. Default: info
 
 	// Stack files directory
-	StacksDir string // Directory for stack files, default: /tmp/stacks
+	StacksDir string // Directory for stack files, default: /data/stacks
 
 	// Version info (set by main.go from ldflags)
 	Version string
@@ -79,7 +79,7 @@ func Load() (*Config, error) {
 		LogLevel: getEnvString("LOG_LEVEL", "info"),
 
 		// Stack files directory
-		StacksDir: getEnvString("STACKS_DIR", "/tmp/stacks"),
+		StacksDir: getEnvString("STACKS_DIR", "/data/stacks"),
 	}
 
 	// Validate configuration

@@ -12,9 +12,13 @@ RUN apk add --no-cache \
 # Copy pre-built binary (provided by goreleaser)
 COPY hawser /usr/local/bin/hawser
 
+# Create data directory for stacks
+RUN mkdir -p /data/stacks
+
 # Environment variables with defaults
 ENV PORT=2376 \
     DOCKER_SOCKET=/var/run/docker.sock \
+    STACKS_DIR=/data/stacks \
     HEARTBEAT_INTERVAL=30 \
     REQUEST_TIMEOUT=30 \
     RECONNECT_DELAY=1 \

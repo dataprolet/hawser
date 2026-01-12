@@ -176,7 +176,7 @@ func (c *ComposeClient) Execute(ctx context.Context, op *ComposeOperation) (*Com
 		if err := os.MkdirAll(stackDir, 0755); err != nil {
 			return &ComposeResult{
 				Success:  false,
-				Error:    fmt.Sprintf("Failed to create stack directory: %v", err),
+				Error:    fmt.Sprintf("Failed to create stack directory %s: %v. Ensure STACKS_DIR points to a writable path.", stackDir, err),
 				ExitCode: 1,
 			}, nil
 		}
