@@ -94,9 +94,9 @@ RUN chmod +x /usr/local/bin/hawser
 # Expose default port
 EXPOSE 2376
 
-# Health check
+# Health check - auto-detects TLS mode
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://localhost:${PORT}/_hawser/health || exit 1
+    CMD if [ -n "$TLS_CERT" ]; then wget -q --spider --no-check-certificate https://localhost:${PORT}/_hawser/health; else wget -q --spider http://localhost:${PORT}/_hawser/health; fi || exit 1
 
 # Run as root to access Docker socket (can be changed with --user flag)
 ENTRYPOINT ["/usr/local/bin/hawser"]
