@@ -1,5 +1,14 @@
-# Multi-stage Dockerfile for local development
-# This builds Hawser from source - no pre-built binary required
+# syntax=docker/dockerfile:1.4
+# =============================================================================
+# Hawser Development Dockerfile - Security-Hardened Build
+# =============================================================================
+# Multi-stage Dockerfile for local development that builds Hawser from source
+# and uses Wolfi OS for a secure, vulnerability-free runtime.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: Go Builder
+# -----------------------------------------------------------------------------
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /src
@@ -15,27 +24,77 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o /hawser ./cmd/hawser
 
-# Runtime stage - minimal image
-FROM alpine:3.19
+# -----------------------------------------------------------------------------
+# Stage 2: OS Generator (Alpine + apko tool)
+# -----------------------------------------------------------------------------
+FROM alpine:3.21 AS os-builder
+
+ARG TARGETARCH
+
+WORKDIR /work
+
+# Install apko tool (latest stable release)
+ARG APKO_VERSION=0.30.34
+RUN apk add --no-cache curl \
+    && ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") \
+    && curl -sL "https://github.com/chainguard-dev/apko/releases/download/v${APKO_VERSION}/apko_${APKO_VERSION}_linux_${ARCH}.tar.gz" \
+       | tar -xz --strip-components=1 -C /usr/local/bin \
+    && chmod +x /usr/local/bin/apko
+
+# Generate apko.yaml for current target architecture only
+RUN APKO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") \
+    && printf '%s\n' \
+    "contents:" \
+    "  repositories:" \
+    "    - https://packages.wolfi.dev/os" \
+    "  keyring:" \
+    "    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub" \
+    "  packages:" \
+    "    - wolfi-base" \
+    "    - ca-certificates" \
+    "    - busybox" \
+    "    - docker-cli" \
+    "    - docker-compose" \
+    "entrypoint:" \
+    "  command: /bin/sh -l" \
+    "archs:" \
+    "  - ${APKO_ARCH}" \
+    > apko.yaml
+
+# Build the OS tarball and extract rootfs
+RUN apko build apko.yaml hawser-base:latest output.tar \
+    && mkdir -p rootfs \
+    && tar -xf output.tar \
+    && LAYER=$(tar -tf output.tar | grep '.tar.gz$' | head -1) \
+    && tar -xzf "$LAYER" -C rootfs
+
+# -----------------------------------------------------------------------------
+# Stage 3: Final Image (Scratch + Custom Wolfi OS)
+# -----------------------------------------------------------------------------
+FROM scratch
+
+# Install our custom-built Wolfi OS
+COPY --from=os-builder /work/rootfs/ /
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache \
-    ca-certificates \
-    docker-cli \
-    docker-cli-compose
-
-# Copy binary from builder
-COPY --from=builder /hawser /usr/local/bin/hawser
-
-# Environment variables with defaults
-ENV PORT=2376 \
+# Set up environment variables
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    PORT=2376 \
     DOCKER_SOCKET=/var/run/docker.sock \
     HEARTBEAT_INTERVAL=30 \
     REQUEST_TIMEOUT=30 \
     RECONNECT_DELAY=1 \
     MAX_RECONNECT_DELAY=60
+
+# Create docker compose plugin symlink
+RUN mkdir -p /usr/libexec/docker/cli-plugins \
+    && ln -s /usr/bin/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
+
+# Copy binary from builder
+COPY --from=builder /hawser /usr/local/bin/hawser
+RUN chmod +x /usr/local/bin/hawser
 
 # Expose default port
 EXPOSE 2376
