@@ -59,11 +59,15 @@ func (c *Collector) Collect() (*protocol.HostMetrics, error) {
 	}
 
 	// Collect disk usage for Docker data root
-	diskTotal, diskUsed, diskFree, err := c.collectDisk()
-	if err == nil {
-		metrics.DiskTotal = diskTotal
-		metrics.DiskUsed = diskUsed
-		metrics.DiskFree = diskFree
+	// Skip if SKIP_DF_COLLECTION is set (useful for NAS devices with many mounted volumes
+	// where statfs calls can be slow and cause performance issues)
+	if os.Getenv("SKIP_DF_COLLECTION") == "" {
+		diskTotal, diskUsed, diskFree, err := c.collectDisk()
+		if err == nil {
+			metrics.DiskTotal = diskTotal
+			metrics.DiskUsed = diskUsed
+			metrics.DiskFree = diskFree
+		}
 	}
 
 	// Collect network stats

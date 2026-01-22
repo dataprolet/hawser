@@ -439,6 +439,7 @@ Hawser is configured via environment variables:
 | `RECONNECT_DELAY` | Initial reconnect delay (Edge mode) | `1` |
 | `MAX_RECONNECT_DELAY` | Maximum reconnect delay | `60` |
 | `LOG_LEVEL` | Logging level: `debug`, `info`, `warn`, `error` | `info` |
+| `SKIP_DF_COLLECTION` | Skip disk usage collection (see below) | - |
 
 ### Mode Detection
 
@@ -507,6 +508,29 @@ Hawser collects and reports host metrics:
 - Network I/O statistics
 
 Metrics are sent every 30 seconds in Edge mode.
+
+#### Disabling Disk Usage Collection
+
+On some systems, particularly NAS devices (Synology, QNAP, TrueNAS) or hosts with many mounted volumes, the disk usage collection can cause performance issues. The `statfs` system call used to check disk space can be slow when there are many mounted filesystems or network mounts.
+
+To disable disk usage collection, set the `SKIP_DF_COLLECTION` environment variable to any non-empty value:
+
+```bash
+# Binary
+SKIP_DF_COLLECTION=1 hawser --port 2376
+
+# Docker
+docker run -d \
+  --name hawser \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -e SKIP_DF_COLLECTION=1 \
+  ghcr.io/finsys/hawser:latest
+
+# Systemd config (/etc/hawser/config)
+SKIP_DF_COLLECTION=1
+```
+
+When disabled, disk metrics will show as 0 in Dockhand (displayed as "N/A").
 
 ### Reliability
 
