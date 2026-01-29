@@ -8,6 +8,7 @@ services:
       - /path/to/certs:/certs:ro  # Optional: with TLS
     ports:
       - 2376:2376
+    restart: always
     environment:
       - TOKEN=your-secret-token  # Optional: with Token Authentication
       - TLS_CERT=/certs/server.crt  # Optional: with TLS
